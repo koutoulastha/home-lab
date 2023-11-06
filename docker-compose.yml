@@ -1,0 +1,380 @@
+version: "3"
+
+# More info at https://github.com/pi-hole/docker-pi-hole/ and https://docs.pi-hole.net/
+services:
+  # pihole:
+  #   container_name: pihole
+  #   image: pihole/pihole:latest
+  #   ports:
+  #     - "53:53/tcp"
+  #     - "53:53/udp"
+  #     - "38880:80/tcp"
+  #   environment:
+  #     TZ: 'Europe/Athens'
+  #     WEBPASSWORD: 'thanos'
+  #   # Volumes store your data between container upgrades
+  #   volumes:
+  #     - './etc-pihole:/etc/pihole'
+  #     - './etc-dnsmasq.d:/etc/dnsmasq.d'
+  #   #   https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+  #   restart: unless-stopped
+  #   profiles: ["pi-hole"]
+  adguardhome:
+    container_name: adguardhome
+    image: adguard/adguardhome
+    restart: unless-stopped
+    volumes:
+      - /zfspool/critical/appdata/adguardhome/work:/opt/adguardhome/work
+      - /zfspool/critical/appdata/adguardhome/conf:/opt/adguardhome/conf
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      # - "67:67/udp"
+      # - "68:68/udp"
+      - "18880:80/tcp"
+      #- "443:443/tcp"
+      #- "443:443/udp"
+      - "3003:3000/tcp"
+      - "853:853/tcp"
+      - "784:784/udp"
+      - "853:853/udp"
+      - "8853:8853/udp"
+      - "5443:5443/tcp"
+      - "5443:5443/udp"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adguardhome.rule=Host(`adguard.local.koutoulastha.dev`)"
+      - "traefik.http.routers.adguardhome.entrypoints=websecure"
+      - traefik.http.routers.adguardhome.tls.certresolver=letsencrypt
+    profiles: ["adguard"]
+  smokeping:
+    image: lscr.io/linuxserver/smokeping:latest
+    container_name: smokeping
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - ~/.config/appdata/smokeping:/config
+      - /zfspool/critical/appdata/smokeping/data:/data
+    ports:
+      - 18080:80
+    restart: unless-stopped
+    profiles: ["smokeping"]
+
+  pialert:
+    container_name: pialert
+    image: "jokobsk/pi.alert:latest"
+    network_mode: "host"
+    restart: unless-stopped
+    volumes:
+      - /zfspool/critical/appdata/pialert/config:/home/pi/pialert/config
+      - /zfspool/critical/appdata/pialert/db:/home/pi/pialert/db
+      # (optional) useful for debugging if you have issues setting up the container
+      - /zfspool/critical/appdata/pialert/logs:/home/pi/pialert/front/log
+    environment:
+      - TZ=Europe/Athens
+      - HOST_USER_ID=1000
+      - HOST_USER_GID=1000
+      - PORT=20211
+    profiles: ["pialert"]
+  homarr:
+    container_name: homarr
+    image: ghcr.io/ajnart/homarr:latest
+    restart: unless-stopped
+    volumes:
+      - /zfspool/critical/appdata/homarr/configs:/app/data/configs
+      - /zfspool/critical/appdata/homarr/icons:/app/public/icons
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=Europe/Athens
+    ports:
+      - '7575:7575'
+    profiles: ["homarr"]
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    cpus: 2
+    mem_limit: 1024m
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+      #- JELLYFIN_PublishedServerUrl=192.168.0.5 #optional
+    volumes:
+      - /zfspool/critical/appdata/jellyfin/config:/config
+      - /zfspool/data/media/tv:/data/media/tv:ro
+      - /zfspool/data/media/movies:/data/media/movies:ro
+      - /zfspool/data/media/music:/data/media/music:ro
+    ports:
+      - 8096:8096
+      - 8920:8920 #optional
+      - 7359:7359/udp #optional
+      - 1900:1900/udp #optional
+    restart: unless-stopped
+    profiles: ["jellyfin"]
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    user: 1000:1000 # should be owner of volumes
+    ports:
+      - 4533:4533
+    environment:
+      # Optional: put your config options customization here. Examples:
+      ND_SCANSCHEDULE: 1h
+      ND_LOGLEVEL: debug
+      ND_SESSIONTIMEOUT: 24h
+      #ND_BASEURL: ""
+    volumes:
+      - /zfspool/critical/appdata/navidrome/data:/data
+      - /zfspool/data/media/music:/music:ro
+    restart: unless-stopped
+    profiles: ["navidrome"]
+  # torrent
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    hostname: qbittorrent.local
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+      - WEBUI_PORT=8080
+    volumes:
+      - /zfspool/critical/appdata/qbittorrent/configs:/config
+      - /zfspool/data/torrents:/data/torrents
+    ports:
+      - 8080:8080
+      - 6881:6881
+      - 6881:6881/udp
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["torrent", "rrs"]
+
+# sonarr
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    hostname: sonarr.local
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/sonarr/configs:/config
+      - /zfspool/data:/data
+    ports:
+      - 8989:8989
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["sonarr", "rrs"]
+
+# radarr
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    hostname: radarr.local
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/radarr/configs:/config
+      - /zfspool/data:/data
+    ports:
+      - 7878:7878
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["radarr", "rrs"]
+    
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/lidarr/config:/config
+      - /zfspool/data:/data
+    ports:
+      - 8686:8686
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["lidarr", "rrs"]
+  whisparr:
+    container_name: whisparr
+    image: ghcr.io/hotio/whisparr
+    ports:
+      - "6969:6969"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/whisparr/config:/config
+      - /zfspool/data:/data
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["whisparr", "rrs"]
+  #jackett
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    hostname: jackett.local
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+      - AUTO_UPDATE=true #optional
+    volumes:
+      - /zfspool/critical/appdata/jackett/configs:/config
+      - /zfspool/data:/data
+    ports:
+      - 9117:9117
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["jackett", "rrs"]
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/prowlarr/configs:/config
+    ports:
+      - 9696:9696
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["prowlarr", "rrs"]
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    container_name: jellyseerr
+    hostname: jellyseerr.local
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Athens
+    volumes:
+      - /zfspool/critical/appdata/jellyseerr/config:/app/config
+    ports:
+      - 5055:5055
+    networks:
+      - arrs
+    labels:
+      - "traefik.http.routers.jellyseerr.rule=Host('test.example.com')"
+    restart: unless-stopped
+    profiles: ["jellyseerr", "rrs"]
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+    ports:
+      - 8191:8191
+    networks:
+      - arrs
+    restart: unless-stopped
+    profiles: ["flaresolverr", "rrs"]
+  traefik:
+    image: traefik
+    container_name: "traefik"
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      #- "--api=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+
+      - "--certificatesresolvers.letsencrypt.acme.email=koutoulastha@hotmail.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      # - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=0"
+      # - "--certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+      # !IMPORTANT - COMMENT OUT THE FOLLOWING LINE IN PRODUCTION!
+      #- "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+
+
+    ports:
+      - 80:80
+      - 443:443
+      - 38888:8080
+    # env_file:
+    #   - ./traefik.env
+    environment:
+      - CF_API_EMAIL=koutoulastha@hotmail.com
+      # - CF_API_KEY=YOU_API_KEY
+      #- CF_DNS_API_TOKEN=lFOBNFD4MyvO364GsW5Bt8tzRGeeCQa-P5kvTqnk
+      - CF_DNS_API_TOKEN=token_here
+      - CF_ZONE_API_TOKEN=token_here
+      # - HOST_NAME=koutoulastha.dev
+      # - TRAEFIK_USER=username
+      # - TRAEFIK_PASSWORD=password
+    volumes:
+      #- /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /zfspool/critical/appdata/traefik/letsencrypt:/letsencrypt
+    labels:
+      - traefik.http.routers.to-https.rule=HostRegexp(`{host:.+}`)
+      - traefik.http.routers.to-https.entrypoints=http
+      - traefik.http.routers.to-https.middlewares=to-https
+
+      - traefik.http.routers.traefik.rule=Host(`koutoulastha.dev`)
+      - traefik.http.routers.traefik.entrypoints=https
+      - traefik.http.routers.traefik.middlewares=auth
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.tls=true
+      - traefik.http.routers.traefik.tls.certresolver=letsencrypt
+
+      - traefik.http.middlewares.to-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.auth.basicauth.users=username:password
+    restart: unless-stopped
+    profiles: ["traefik"]
+
+  whoami:
+    image: "traefik/whoami"
+    container_name: "simple-service"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.local.koutoulastha.dev`)"
+      - "traefik.http.routers.whoami.entrypoints=websecure"
+      - traefik.http.routers.whoami.tls.certresolver=letsencrypt
+      # - "traefik.enable=true"
+      # - "traefik.http.routers.whoami.rule=Host(`whoami.local.koutoulastha.dev`)"
+      # - "traefik.http.routers.whoami.entrypoints=https"
+    profiles: ["whoami"]
+  stirling-pdf:
+    image: frooodle/s-pdf:latest
+    container_name: stirling-pdf
+    cpus: 2
+    mem_limit: 512m
+    ports:
+      - '38080:8080'
+    volumes:
+      #- /location/of/trainingData:/usr/share/tesseract-ocr/4.00/tessdata #Required for extra OCR languages
+      - /zfspool/critical/appdata/stirling-pdf/config:/configs
+#      - /location/of/customFiles:/customFiles/
+    environment:
+      - DOCKER_ENABLE_SECURITY=false
+    restart: unless-stopped
+    profiles: ["stirling-pdf"]
+
+networks:
+  # for sonarr
+  arrs:
+    driver: bridge
