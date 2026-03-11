@@ -1,6 +1,6 @@
 {
-    "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
-    "packages": [
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": [
     "jq@latest",
     "k9s@latest",
     "kubectl@latest",
@@ -13,17 +13,17 @@
     "talosctl@latest",
     "cilium-cli@latest",
     "opentofu@latest",
-    "helm@latest"
+    "helm@latest",
+    "kubelogin-oidc@latest"
   ],
-    "shell": {
-      "init_hook": [
-        "echo 'Welcome to devbox!' > /dev/null"
-      ],
-      "scripts": {
-        "test": [
-          "echo \"Error: no test specified\" && exit 1"
-        ]
-      }
+  "shell": {
+    "init_hook": [
+      "echo 'Welcome to devbox!' > /dev/null"
+    ],
+    "scripts": {
+      "test": [
+        "echo \"Error: no test specified\" && exit 1"
+      ]
     }
   }
-  
+}
