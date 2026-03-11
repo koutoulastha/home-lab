@@ -12,7 +12,7 @@
     "talhelper@latest",
     "talosctl@latest",
     "cilium-cli@latest",
-    "terraform@latest",
+    "opentofu@latest",
     "helm@latest"
   ],
     "shell": {
