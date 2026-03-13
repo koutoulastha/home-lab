@@ -18,7 +18,9 @@
   ],
   "shell": {
     "init_hook": [
-      "echo 'Welcome to devbox!' > /dev/null"
+      "echo 'Welcome to devbox!' > /dev/null",
+      "export KUBECONFIG=\"${DEVBOX_PROJECT_ROOT:-$PWD}/.kube/config.yaml\"",
+      "alias k=kubectl"
     ],
     "scripts": {
       "test": [
