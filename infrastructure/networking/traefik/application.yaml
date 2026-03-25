@@ -24,3 +24,24 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik-config
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: version3
+    path: infrastructure/networking/traefik
+    directory:
+      include: '{httproute.yaml,certificates.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
