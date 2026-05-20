@@ -9,9 +9,9 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-key
     solvers:
-      - http01:
-          gatewayHTTPRoute:
-            parentRefs:
-              - name: traefik-gateway
-                namespace: default
-                kind: Gateway
+      - dns01:
+          cloudflare:
+            email: koutoulastha@hotmail.com
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
