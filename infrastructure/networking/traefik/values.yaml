@@ -5,3 +5,10 @@ providers:
     enabled: true
 gateway:
   namespacePolicy: All
+# Expose the API/dashboard entrypoint ("traefik", :8080) on the Service so the
+# Gateway HTTPRoute can use it as a backend. The chart serves the dashboard on
+# this entrypoint at /dashboard/ and /api.
+ports:
+  traefik:
+    expose:
+      default: true
