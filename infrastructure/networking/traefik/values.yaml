@@ -12,3 +12,11 @@ ports:
   traefik:
     expose:
       default: true
+# Create the IngressRoute that routes /dashboard and /api on the "traefik"
+# entrypoint to the internal api@internal handler. Without this the dashboard
+# is enabled but unrouted (Traefik returns 404).
+api:
+  dashboard: true
+ingressRoute:
+  dashboard:
+    enabled: true
