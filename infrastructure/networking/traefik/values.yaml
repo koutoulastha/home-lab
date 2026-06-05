@@ -5,13 +5,19 @@ providers:
     enabled: true
 gateway:
   namespacePolicy: All
-# Expose the API/dashboard entrypoint ("traefik", :8080) on the Service so the
-# Gateway HTTPRoute can use it as a backend. The chart serves the dashboard on
-# this entrypoint at /dashboard/ and /api.
+# Expose the API/dashboard entrypoint ("traefik", :8080) on an internal-only
+# ClusterIP service ("traefik-internal") rather than the external LoadBalancer,
+# so the dashboard is reachable ONLY through the Gateway (HTTPS) and never on
+# the LAN-facing LB IP. The Gateway HTTPRoute backends to traefik-internal:8080.
 ports:
   traefik:
     expose:
-      default: true
+      default: false
+      internal: true
+service:
+  additionalServices:
+    internal:
+      type: ClusterIP
 # Create the IngressRoute that routes /dashboard and /api on the "traefik"
 # entrypoint to the internal api@internal handler. Without this the dashboard
 # is enabled but unrouted (Traefik returns 404).

@@ -11,5 +11,5 @@ spec:
     - "traefik.koutoulastha.dev"
   rules:
     - backendRefs:
-        - name: traefik
+        - name: traefik-internal
           port: 8080
