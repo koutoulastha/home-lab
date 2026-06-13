@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openspeedtest-cert
+  namespace: default
+spec:
+  secretName: speedtest-koutoulastha-dev-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - speedtest.koutoulastha.dev

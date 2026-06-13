@@ -36,3 +36,15 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+    - name: websecure-openspeedtest
+      protocol: HTTPS
+      port: 8443
+      hostname: speedtest.koutoulastha.dev
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: speedtest-koutoulastha-dev-tls
+            namespace: default
+      allowedRoutes:
+        namespaces:
+          from: All
