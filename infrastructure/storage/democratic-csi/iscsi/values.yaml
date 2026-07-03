@@ -1,0 +1,38 @@
+csiDriver:
+  name: "org.democratic-csi.iscsi"
+
+storageClasses:
+  - name: truenas-iscsi
+    defaultClass: true
+    reclaimPolicy: Delete
+    volumeBindingMode: Immediate
+    allowVolumeExpansion: true
+    parameters:
+      fsType: ext4
+    mountOptions: []
+    secrets:
+      provisioner-secret:
+      controller-publish-secret:
+      node-stage-secret:
+      node-publish-secret:
+      controller-expand-secret:
+
+volumeSnapshotClasses:
+  - name: truenas-iscsi
+    parameters:
+    secrets:
+      snapshotter-secret:
+
+driver:
+  existingConfigSecret: truenas-iscsi-driver-config
+  config:
+    driver: freenas-iscsi
+
+# Talos: node DaemonSet must reach the host iscsi-tools extension.
+# Confirm this path on your Talos version before syncing:
+#   talosctl -n <NODE_IP> list /system/iscsi-tools/var/lib/iscsi
+node:
+  hostPID: true
+  driver:
+    iscsiDirHostPath: /system/iscsi-tools/var/lib/iscsi
+    iscsiDirHostPathType: ""
