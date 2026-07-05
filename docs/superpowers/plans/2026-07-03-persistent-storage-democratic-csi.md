@@ -13,15 +13,14 @@
 - **GitOps pattern (copy exactly from existing apps):** every ArgoCD `Application` uses `spec.sources` with (1) the external Helm chart repo (`chart:` + `targetRevision:` + `helm.valueFiles: [$values/<path>]`) and (2) a values source `repoURL: https://github.com/koutoulastha/home-lab.git`, `targetRevision: version3`, `ref: values`. `syncPolicy.automated: { prune: true, selfHeal: true }`, `syncOptions: [CreateNamespace=true]`.
 - **Branch:** all repo files are committed to branch `version3` (the branch ArgoCD tracks).
 - **Pin chart versions:** set an explicit `targetRevision` (chart version) for democratic-csi, sealed-secrets, and snapshot-controller — do NOT use `"*"` for these storage/secret-critical components. The versions written in the tasks below (`democratic-csi 0.14.7`, `sealed-secrets 2.16.2`, `snapshot-controller 3.0.6`) are starting points — confirm/replace each with a current release before syncing: `helm repo add <name> <url> && helm search repo <name>/<chart> --versions | head`. If you bump a chart, re-check its `values.yaml` keys still match this plan (esp. the piraeus snapshot-controller `installCRDs`/`controller` keys).
-- **No plaintext secrets in git:** the TrueNAS API key and SSH private key appear ONLY inside a `SealedSecret`. A final task greps the repo to prove it.
+- **No plaintext secrets in git:** the TrueNAS API key appears ONLY inside a `SealedSecret`. A final task greps the repo to prove it. (The API-only drivers use no SSH key.)
 - **Division of labor:** the implementer creates and commits repo files. All cluster-side commands (`talosctl`, `kubectl`, `argocd`, `kubeseal`, TrueNAS UI) are presented as copy-paste blocks for the operator to run — the implementer does not execute them.
 - **Operator-supplied inputs** (substitute everywhere you see the token). Fill these in once, up front:
 
   | Token | Meaning | Example |
   |---|---|---|
-  | `<TRUENAS_HOST>` | TrueNAS IP/hostname (API, SSH, NFS/iSCSI portal) | `192.168.1.20` |
-  | `<TRUENAS_API_KEY>` | TrueNAS API key | `1-abc...` |
-  | `<TRUENAS_SSH_PRIVATE_KEY>` | PEM private key for the TrueNAS SSH user | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+  | `<TRUENAS_HOST>` | TrueNAS IP/hostname (API + NFS/iSCSI portal) | `192.168.1.20` |
+  | `<TRUENAS_API_KEY>` | TrueNAS API key from a `FULL_ADMIN` user | `1-abc...` |
   | `<ZFS_POOL>` | Root ZFS pool name on TrueNAS | `tank` |
   | `<CLUSTER_SUBNET>` | CIDR of K8s nodes + Docker hosts allowed to mount NFS | `192.168.1.0/24` |
   | `<TALOS_VERSION>` | Talos version currently running | `v1.7.6` |
@@ -100,17 +99,13 @@ Prepare datasets, iSCSI/NFS services, and the credentials democratic-csi will us
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `<TRUENAS_API_KEY>`, `<TRUENAS_SSH_PRIVATE_KEY>`, parent datasets, an iSCSI portal (group 1) + initiator group (group 1) + target basename, and an enabled NFS service — all consumed by Tasks 4–7.
+- Produces: `<TRUENAS_API_KEY>` (from a `FULL_ADMIN` user), parent datasets, an iSCSI portal (group 1) + initiator group (group 1) + target basename, and an enabled NFS service — all consumed by Tasks 4–7. No SSH key needed: the API-only drivers do everything over the HTTP API.
 
 - [ ] **Step 1: Create parent datasets**
 
 In TrueNAS: **Datasets** → create `k8s`, then children `k8s/iscsi`, `k8s/iscsi/v`, `k8s/iscsi/s`, `k8s/nfs`, `k8s/nfs/v`, `k8s/nfs/s` under `<ZFS_POOL>`.
 
-Verify over SSH:
-```bash
-ssh root@<TRUENAS_HOST> "zfs list -r <ZFS_POOL>/k8s"
-```
-Expected: all six datasets listed.
+Verify in the UI (**Datasets** tree) that all six children exist under `<ZFS_POOL>/k8s`.
 
 - [ ] **Step 2: Enable + configure iSCSI**
 
@@ -123,18 +118,27 @@ Expected: all six datasets listed.
 
 **System Settings → Services → NFS** → enable + start on boot. (Per-share exports are created dynamically by democratic-csi; no manual share needed.)
 
-- [ ] **Step 4: Create an API key**
+- [ ] **Step 4: Create an API key under a FULL_ADMIN user**
 
-**Credentials → API Keys → Add** → copy the value into `<TRUENAS_API_KEY>`.
+The API-only drivers manage datasets/zvols, iSCSI targets/extents, NFS shares,
+and snapshots — spanning multiple middleware namespaces — so the key must belong
+to a user with the **`FULL_ADMIN`** role (TrueNAS SCALE 24.10+ RBAC; on older
+SCALE, API keys are full-access regardless).
 
-- [ ] **Step 5: Provide SSH access for the driver**
+- **Credentials → Local Users** → use `admin`/`truenas_admin` or create a
+  dedicated user, and ensure it holds the `FULL_ADMIN` role.
+- **Credentials → API Keys → Add**, owned by that user → copy the value into
+  `<TRUENAS_API_KEY>`.
 
-Ensure the `root` user (or a dedicated user) has SSH enabled and an authorized public key. Keep the matching private key for `<TRUENAS_SSH_PRIVATE_KEY>`.
+No SSH access or private key is required — this is the whole point of the
+API-only drivers. You can leave SSH disabled on TrueNAS.
 
+Verify the key works (from your workstation, read-only call):
 ```bash
-ssh root@<TRUENAS_HOST> "zfs --version && iscsictl -L >/dev/null 2>&1; echo ssh-ok"
+curl -sk -H "Authorization: Bearer <TRUENAS_API_KEY>" \
+  https://<TRUENAS_HOST>/api/v2.0/pool/dataset | head -c 200; echo
 ```
-Expected: prints the zfs version and `ssh-ok`.
+Expected: a JSON array of datasets (HTTP 200), not `401 Unauthorized`.
 
 ---
 
@@ -234,14 +238,16 @@ Produce two `SealedSecret`s (one per protocol) holding the full democratic-csi d
 - (Operator scratch, NOT committed): `/tmp/iscsi-config.yaml`, `/tmp/nfs-config.yaml`
 
 **Interfaces:**
-- Consumes: `<TRUENAS_HOST>`, `<TRUENAS_API_KEY>`, `<TRUENAS_SSH_PRIVATE_KEY>`, `<ZFS_POOL>`, `<CLUSTER_SUBNET>` (Task 2); the controller from Task 3.
+- Consumes: `<TRUENAS_HOST>`, `<TRUENAS_API_KEY>`, `<ZFS_POOL>`, `<CLUSTER_SUBNET>` (Task 2); the controller from Task 3.
 - Produces: in-cluster `Secret`s `truenas-iscsi-driver-config` and `truenas-nfs-driver-config` (namespace `democratic-csi`), each with key `driver-config-file.yaml`, referenced by Tasks 6–7 via `driver.existingConfigSecret`.
 
 - [ ] **Step 1: Write the iSCSI driver config (operator, scratch file)**
 
-`/tmp/iscsi-config.yaml` — the value that becomes the secret. Fill tokens:
+`/tmp/iscsi-config.yaml` — the value that becomes the secret. Fill tokens.
+This uses the **API-only** driver: all TrueNAS operations go over the HTTP API,
+so there is **no `sshConnection` block** and no root/sudo SSH requirement.
 ```yaml
-driver: freenas-iscsi
+driver: freenas-api-iscsi
 httpConnection:
   protocol: https
   host: <TRUENAS_HOST>
@@ -249,12 +255,6 @@ httpConnection:
   apiKey: <TRUENAS_API_KEY>
   allowInsecure: true
   apiVersion: 2
-sshConnection:
-  host: <TRUENAS_HOST>
-  port: 22
-  username: root
-  privateKey: |
-    <TRUENAS_SSH_PRIVATE_KEY>
 zfs:
   datasetParentName: <ZFS_POOL>/k8s/iscsi/v
   detachedSnapshotsDatasetParentName: <ZFS_POOL>/k8s/iscsi/s
@@ -283,9 +283,9 @@ iscsi:
 
 - [ ] **Step 2: Write the NFS driver config (operator, scratch file)**
 
-`/tmp/nfs-config.yaml`:
+`/tmp/nfs-config.yaml` (API-only driver, **no `sshConnection` block**):
 ```yaml
-driver: freenas-nfs
+driver: freenas-api-nfs
 httpConnection:
   protocol: https
   host: <TRUENAS_HOST>
@@ -293,12 +293,6 @@ httpConnection:
   apiKey: <TRUENAS_API_KEY>
   allowInsecure: true
   apiVersion: 2
-sshConnection:
-  host: <TRUENAS_HOST>
-  port: 22
-  username: root
-  privateKey: |
-    <TRUENAS_SSH_PRIVATE_KEY>
 zfs:
   datasetParentName: <ZFS_POOL>/k8s/nfs/v
   detachedSnapshotsDatasetParentName: <ZFS_POOL>/k8s/nfs/s
@@ -341,7 +335,7 @@ Note: `kubeseal` needs the `democratic-csi` namespace to exist OR use scope. If 
 - [ ] **Step 4: Verify no plaintext leaked into the sealed files**
 
 ```bash
-grep -E "BEGIN OPENSSH|BEGIN RSA|<TRUENAS_API_KEY>|apiKey" \
+grep -E "<TRUENAS_API_KEY>|apiKey" \
   infrastructure/storage/democratic-csi/iscsi/sealed-secret.yaml \
   infrastructure/storage/democratic-csi/nfs/sealed-secret.yaml
 ```
@@ -482,7 +476,7 @@ volumeSnapshotClasses:
 driver:
   existingConfigSecret: truenas-iscsi-driver-config
   config:
-    driver: freenas-iscsi
+    driver: freenas-api-iscsi
 
 # Talos: node DaemonSet must reach the host iscsi-tools extension.
 node:
@@ -567,7 +561,7 @@ spec:
 EOF
 kubectl get pvc iscsi-test
 ```
-Expected: PVC `Bound` within ~30s, and a zvol appears: `ssh root@<TRUENAS_HOST> "zfs list -r <ZFS_POOL>/k8s/iscsi/v"`.
+Expected: PVC `Bound` within ~30s, and a zvol appears under `<ZFS_POOL>/k8s/iscsi/v` — check in the TrueNAS UI (**Datasets**), or via the API: `curl -sk -H "Authorization: Bearer <TRUENAS_API_KEY>" "https://<TRUENAS_HOST>/api/v2.0/pool/dataset/id/$(python3 -c 'import urllib.parse;print(urllib.parse.quote("<ZFS_POOL>/k8s/iscsi/v",safe=""))')" | head -c 300`.
 
 ```bash
 kubectl run iscsi-w --image=busybox --restart=Never --overrides='{"spec":{"containers":[{"name":"c","image":"busybox","command":["sh","-c","echo homelab > /data/marker && sleep 3600"],"volumeMounts":[{"name":"v","mountPath":"/data"}]}],"volumes":[{"name":"v","persistentVolumeClaim":{"claimName":"iscsi-test"}}]}}'
@@ -631,7 +625,7 @@ storageClasses:
 driver:
   existingConfigSecret: truenas-nfs-driver-config
   config:
-    driver: freenas-nfs
+    driver: freenas-api-nfs
 ```
 
 - [ ] **Step 2: Create the ArgoCD Application**
@@ -803,10 +797,9 @@ Expected: `READYTOUSE=true`. Then clean up: `kubectl delete volumesnapshot snap-
 - [ ] **Step 3: Prove no plaintext credentials in the repo**
 
 ```bash
-git grep -nE "BEGIN OPENSSH PRIVATE KEY|BEGIN RSA PRIVATE KEY" -- . || echo "clean: no private keys"
 git grep -nE "apiKey:\s*\S+" -- infrastructure/ || echo "clean: no plaintext apiKey"
 ```
-Expected: both print their `clean:` message (only `encryptedData` lives in the sealed-secret files).
+Expected: prints the `clean:` message (only `encryptedData` lives in the sealed-secret files).
 
 - [ ] **Step 4: ArgoCD health (operator)**
 

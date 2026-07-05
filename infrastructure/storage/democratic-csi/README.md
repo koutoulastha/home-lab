@@ -53,7 +53,9 @@ extension (Talos mounts NFS natively).
 - iSCSI service on; one Portal (group `1`), one Initiator group (group `1`),
   note the target Base Name.
 - NFS service on (shares are created dynamically by the driver).
-- An API key + an SSH key for the driver user (`root`).
+- An API key owned by a `FULL_ADMIN` user. The **API-only drivers**
+  (`freenas-api-iscsi` / `freenas-api-nfs`) do everything over the HTTP API, so
+  **no SSH key or root SSH is required** — SSH can stay disabled on TrueNAS.
 
 ## Rotating / creating credentials (kubeseal)
 
@@ -62,7 +64,7 @@ committed**. To (re)create them:
 
 ```bash
 # 1. Write /tmp/iscsi-config.yaml and /tmp/nfs-config.yaml
-#    (freenas-iscsi / freenas-nfs driver configs — see the plan, Task 4)
+#    (freenas-api-iscsi / freenas-api-nfs driver configs — see the plan, Task 4)
 
 # 2. Seal each into its release directory
 for p in iscsi nfs; do

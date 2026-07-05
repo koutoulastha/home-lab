@@ -68,9 +68,9 @@ secondary. Credentials are stored as a sealed secret and decrypted in-cluster.
 ```
                     ┌─────────────────────── Kubernetes (multi-node Talos) ──────────────────┐
                     │                                                                        │
- PVC (default) ─────┼─▶ StorageClass: truenas-iscsi ─▶ democratic-csi-iscsi (freenas-iscsi) ─┼──┐
+ PVC (default) ─────┼─▶ StorageClass: truenas-iscsi ─▶ democratic-csi-iscsi (freenas-api-iscsi)┼──┐
                     │     RWO block, per-PVC ZFS zvol                                         │  │  iSCSI
- PVC (RWX) ─────────┼─▶ StorageClass: truenas-nfs   ─▶ democratic-csi-nfs   (freenas-nfs)    ┼──┤  + NFS
+ PVC (RWX) ─────────┼─▶ StorageClass: truenas-nfs   ─▶ democratic-csi-nfs   (freenas-api-nfs) ┼──┤  + NFS
                     │     RWX file,  per-PVC ZFS dataset                                      │  │
                     └────────────────────────────────────────────────────────────────────────┘  │
                                                                                                   ▼
@@ -135,8 +135,9 @@ Performed on TrueNAS before the CSI releases sync:
   basename configured.
 - **NFS service:** enabled; allowed network scoped to the cluster + Docker-host
   subnet.
-- An **API key** (TrueNAS → API Keys) and an **SSH key** for the account
-  democratic-csi authenticates as.
+- An **API key** (TrueNAS → API Keys) owned by a **`FULL_ADMIN`** user. The
+  API-only drivers (`freenas-api-*`) do everything over the HTTP middleware API,
+  so **no SSH access or SSH key is required** — SSH can stay disabled on TrueNAS.
 
 ### 4. democratic-csi — iSCSI release (ArgoCD-managed)
 
@@ -144,7 +145,7 @@ Performed on TrueNAS before the CSI releases sync:
   (`application.yaml` + `values.yaml`).
 - Chart: `democratic-csi` from `https://democratic-csi.github.io/charts/`
   (pinned `targetRevision`), namespace `democratic-csi`.
-- Driver: `freenas-iscsi`, pointed at the TrueNAS API + SSH via the sealed
+- Driver: `freenas-api-iscsi`, pointed at the TrueNAS API via the sealed
   credential (`driver.existingConfigSecret` referencing the decrypted Secret).
 - Node section carries **Talos-specific overrides** (`hostPID: true` + iscsi host
   paths). Exact paths are pinned during implementation against democratic-csi's
@@ -158,7 +159,7 @@ Performed on TrueNAS before the CSI releases sync:
 
 - Path: `infrastructure/storage/democratic-csi/nfs/`
   (`application.yaml` + `values.yaml`).
-- Same chart, second Helm release, driver `freenas-nfs`, referencing the same
+- Same chart, second Helm release, driver `freenas-api-nfs`, referencing the same
   (or a sibling) sealed credential.
 - Creates StorageClass **`truenas-nfs`** (RWX-capable, not default).
 
@@ -178,10 +179,10 @@ infrastructure/
     democratic-csi/
       iscsi/
         application.yaml       # ArgoCD App: democratic-csi chart + $values
-        values.yaml            # freenas-iscsi; SC truenas-iscsi (default); snapshot class
+        values.yaml            # freenas-api-iscsi; SC truenas-iscsi (default); snapshot class
       nfs/
         application.yaml
-        values.yaml            # freenas-nfs; SC truenas-nfs (RWX)
+        values.yaml            # freenas-api-nfs; SC truenas-nfs (RWX)
       README.md                # Talos extension rollout, TrueNAS prep, kubeseal steps,
                                # Docker-host NFS mount — all the out-of-band runbook steps
 docs/superpowers/specs/
@@ -196,7 +197,7 @@ Helm chart repo + a `ref: values` source pointing at
 ## Data Flow (provisioning a volume)
 
 1. A workload's PVC names `truenas-iscsi` (or omits `storageClassName` → default).
-2. democratic-csi controller calls the TrueNAS API/SSH, creates a zvol under
+2. democratic-csi controller calls the TrueNAS API, creates a zvol under
    `<pool>/k8s/iscsi/`, and exposes it as an iSCSI LUN.
 3. The node DaemonSet (using the iscsi-tools extension) logs into the target,
    attaches the block device, formats and mounts it into the pod.
@@ -207,8 +208,8 @@ Helm chart repo + a `ref: values` source pointing at
 
 ## Secrets Handling
 
-- The driver config (TrueNAS API key + SSH private key) is **never committed in
-  plaintext**.
+- The driver config (TrueNAS API key) is **never committed in plaintext**. The
+  API-only drivers use no SSH key.
 - Operator runs `kubeseal` locally against the cluster's sealed-secrets
   controller to produce a `SealedSecret`, which **is** safe to commit.
 - The controller decrypts it in-cluster into the real `Secret`; each
@@ -219,7 +220,8 @@ Helm chart repo + a `ref: values` source pointing at
 
 - **Phase 0 — Node & backend prep (out-of-band, gating):** roll out Talos
   `iscsi-tools` + `util-linux-tools` extensions via Image Factory + `talosctl
-  upgrade`; prepare TrueNAS datasets, iSCSI/NFS services, API key, SSH key.
+  upgrade`; prepare TrueNAS datasets, iSCSI/NFS services, and a `FULL_ADMIN`
+  API key (no SSH key needed).
 - **Phase 1 — Secrets:** deploy sealed-secrets controller via ArgoCD; install
   `kubeseal`; seal the TrueNAS driver config and commit the `SealedSecret`.
 - **Phase 2 — iSCSI:** deploy democratic-csi iSCSI release; `truenas-iscsi`
@@ -239,8 +241,8 @@ Helm chart repo + a `ref: values` source pointing at
 5. **Backend verification:** the corresponding zvol/dataset actually appears under
    `<pool>/k8s/iscsi` / `<pool>/k8s/nfs` on TrueNAS.
 6. **Snapshot:** a VolumeSnapshot of an iSCSI PVC is created and restorable.
-7. **No secret leakage:** `git grep` finds no plaintext API key or SSH private
-   key; only the `SealedSecret` is committed.
+7. **No secret leakage:** `git grep` finds no plaintext API key; only the
+   `SealedSecret` is committed.
 
 ## Risks / Open Implementation Details
 

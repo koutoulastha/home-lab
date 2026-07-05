@@ -26,7 +26,7 @@ volumeSnapshotClasses:
 driver:
   existingConfigSecret: truenas-iscsi-driver-config
   config:
-    driver: freenas-iscsi
+    driver: freenas-api-iscsi
 
 # Talos: node DaemonSet must reach the host iscsi-tools extension.
 # Confirm this path on your Talos version before syncing:

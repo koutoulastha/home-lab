@@ -22,4 +22,4 @@ storageClasses:
 driver:
   existingConfigSecret: truenas-nfs-driver-config
   config:
-    driver: freenas-nfs
+    driver: freenas-api-nfs
