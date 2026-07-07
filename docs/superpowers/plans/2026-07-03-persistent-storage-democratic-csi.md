@@ -12,7 +12,7 @@
 
 - **GitOps pattern (copy exactly from existing apps):** every ArgoCD `Application` uses `spec.sources` with (1) the external Helm chart repo (`chart:` + `targetRevision:` + `helm.valueFiles: [$values/<path>]`) and (2) a values source `repoURL: https://github.com/koutoulastha/home-lab.git`, `targetRevision: version3`, `ref: values`. `syncPolicy.automated: { prune: true, selfHeal: true }`, `syncOptions: [CreateNamespace=true]`.
 - **Branch:** all repo files are committed to branch `version3` (the branch ArgoCD tracks).
-- **Pin chart versions:** set an explicit `targetRevision` (chart version) for democratic-csi, sealed-secrets, and snapshot-controller — do NOT use `"*"` for these storage/secret-critical components. The versions written in the tasks below (`democratic-csi 0.14.7`, `sealed-secrets 2.16.2`, `snapshot-controller 3.0.6`) are starting points — confirm/replace each with a current release before syncing: `helm repo add <name> <url> && helm search repo <name>/<chart> --versions | head`. If you bump a chart, re-check its `values.yaml` keys still match this plan (esp. the piraeus snapshot-controller `installCRDs`/`controller` keys).
+- **Pin chart versions:** set an explicit `targetRevision` (chart version) for democratic-csi, sealed-secrets, and snapshot-controller — do NOT use `"*"` for these storage/secret-critical components. The versions written in the tasks below (`democratic-csi 0.15.1`, `sealed-secrets 2.19.1`, `snapshot-controller 5.1.1`) were confirmed current on 2026-07-07 — reconfirm before syncing: `helm repo add <name> <url> && helm search repo <name>/<chart> --versions | head`. If you bump a chart, re-check its `values.yaml` keys still match this plan (esp. the piraeus snapshot-controller `installCRDs`/`controller` keys).
 - **No plaintext secrets in git:** the TrueNAS API key appears ONLY inside a `SealedSecret`. A final task greps the repo to prove it. (The API-only drivers use no SSH key.)
 - **Division of labor:** the implementer creates and commits repo files. All cluster-side commands (`talosctl`, `kubectl`, `argocd`, `kubeseal`, TrueNAS UI) are presented as copy-paste blocks for the operator to run — the implementer does not execute them.
 - **Operator-supplied inputs** (substitute everywhere you see the token). Fill these in once, up front:
@@ -185,7 +185,7 @@ spec:
   sources:
     - repoURL: https://bitnami-labs.github.io/sealed-secrets
       chart: sealed-secrets
-      targetRevision: 2.16.2
+      targetRevision: 2.19.1
       helm:
         valueFiles:
           - $values/infrastructure/sealed-secrets/values.yaml
@@ -397,7 +397,7 @@ spec:
   sources:
     - repoURL: https://piraeus.io/helm-charts/
       chart: snapshot-controller
-      targetRevision: 3.0.6
+      targetRevision: 5.1.1
       helm:
         valueFiles:
           - $values/infrastructure/storage/snapshot-controller/values.yaml
@@ -511,7 +511,7 @@ spec:
   sources:
     - repoURL: https://democratic-csi.github.io/charts/
       chart: democratic-csi
-      targetRevision: 0.14.7
+      targetRevision: 0.15.1
       helm:
         valueFiles:
           - $values/infrastructure/storage/democratic-csi/iscsi/values.yaml
@@ -645,7 +645,7 @@ spec:
   sources:
     - repoURL: https://democratic-csi.github.io/charts/
       chart: democratic-csi
-      targetRevision: 0.14.7
+      targetRevision: 0.15.1
       helm:
         valueFiles:
           - $values/infrastructure/storage/democratic-csi/nfs/values.yaml
