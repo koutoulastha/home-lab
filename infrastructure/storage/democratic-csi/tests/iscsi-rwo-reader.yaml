@@ -1,0 +1,21 @@
+# iSCSI RWO test — step 2: after deleting iscsi-writer, reschedule and read the
+# marker back. Reuses the same PVC; the zvol must detach from the old node and
+# reattach here. Expect the logs to print "homelab".
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iscsi-reader
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["cat", "/data/marker"]
+      volumeMounts:
+        - name: v
+          mountPath: /data
+  volumes:
+    - name: v
+      persistentVolumeClaim:
+        claimName: iscsi-test

@@ -1,0 +1,23 @@
+# Snapshot round-trip — provision a default-class (iSCSI) PVC and snapshot it
+# through the truenas-iscsi VolumeSnapshotClass. Expect the VolumeSnapshot to
+# reach READYTOUSE=true (a ZFS snapshot appears under IOPSicle/k8s/iscsi/s).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: snap-src
+  namespace: default
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: snap-1
+  namespace: default
+spec:
+  volumeSnapshotClassName: truenas-iscsi
+  source:
+    persistentVolumeClaimName: snap-src

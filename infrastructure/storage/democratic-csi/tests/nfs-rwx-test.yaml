@@ -1,0 +1,70 @@
+# NFS RWX test — two pods mount the SAME volume at once and both append to it.
+# soft anti-affinity nudges them onto different nodes to prove cross-node RWX.
+# Expect both pods Ready and /data/shared to contain "from-a" and "from-b".
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-test
+  namespace: default
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: truenas-nfs
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-a
+  namespace: default
+  labels: { app: nfs-rwx-test }
+spec:
+  restartPolicy: Never
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels: { app: nfs-rwx-test }
+            topologyKey: kubernetes.io/hostname
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sh", "-c", "echo from-a >> /data/shared && sleep 3600"]
+      volumeMounts:
+        - name: v
+          mountPath: /data
+  volumes:
+    - name: v
+      persistentVolumeClaim:
+        claimName: nfs-test
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-b
+  namespace: default
+  labels: { app: nfs-rwx-test }
+spec:
+  restartPolicy: Never
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels: { app: nfs-rwx-test }
+            topologyKey: kubernetes.io/hostname
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sh", "-c", "echo from-b >> /data/shared && sleep 3600"]
+      volumeMounts:
+        - name: v
+          mountPath: /data
+  volumes:
+    - name: v
+      persistentVolumeClaim:
+        claimName: nfs-test
