@@ -11,7 +11,9 @@ spec:
   sources:
     - repoURL: https://piraeus.io/helm-charts/
       chart: snapshot-controller
-      targetRevision: 5.1.1
+      # 5.2.0 is packaging-only vs 5.1.1 (both ship appVersion v8.6.0). It is
+      # required for webhook.enabled to actually work — see values.yaml.
+      targetRevision: 5.2.0
       helm:
         valueFiles:
           - $values/infrastructure/storage/snapshot-controller/values.yaml

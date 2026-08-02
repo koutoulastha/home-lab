@@ -3,11 +3,17 @@ installCRDs: true
 
 # The conversion webhook is only needed for clusters holding VolumeGroupSnapshot
 # objects in the older v1beta1/v1beta2 APIs. We use plain VolumeSnapshot (v1) via
-# democratic-csi, so it is dead weight — and with tls.autogenerate it mints a new
-# self-signed cert on every Helm render, leaving Secret/snapshot-controller-
-# conversion-webhook and the volumegroupsnapshotcontents CRD permanently
-# OutOfSync in ArgoCD. Chart 5.1.1 enables it by default; upstream flipped the
-# default to false in 5.2.0 for this reason.
+# democratic-csi, so it is dead weight.
+#
+# It also caused permanent ArgoCD drift on Secret/snapshot-controller-conversion-
+# webhook and the volumegroupsnapshotcontents CRD: with tls.autogenerate the
+# chart reuses an existing cert only via Helm's `lookup`, which always returns
+# nil under `helm template` — how ArgoCD renders — so every reconcile minted a
+# fresh self-signed cert and re-injected a new caBundle.
+#
+# This requires chart >= 5.2.0. In 5.1.1 the guard below gates only the webhook
+# Deployment; the Secret and caBundle injection render unconditionally, so
+# disabling it there removes the Deployment but leaves the drift in place.
 webhook:
   enabled: false
 
