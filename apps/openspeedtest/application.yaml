@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openspeedtest
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openspeedtest
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: apps/openspeedtest
+    directory:
+      exclude: '{application.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

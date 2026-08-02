@@ -1,0 +1,50 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: traefik-gateway
+  namespace: default
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: web
+      protocol: HTTP
+      port: 8000
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: websecure-traefik
+      protocol: HTTPS
+      port: 8443
+      hostname: traefik.koutoulastha.dev
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: traefik-koutoulastha-dev-tls
+            namespace: default
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: websecure-argocd
+      protocol: HTTPS
+      port: 8443
+      hostname: argocd.koutoulastha.dev
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: argocd-koutoulastha-dev-tls
+            namespace: default
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: websecure-openspeedtest
+      protocol: HTTPS
+      port: 8443
+      hostname: speedtest.koutoulastha.dev
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: speedtest-koutoulastha-dev-tls
+            namespace: default
+      allowedRoutes:
+        namespaces:
+          from: All

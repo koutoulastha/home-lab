@@ -1,0 +1,31 @@
+# iSCSI RWO test — step 1: bind the default StorageClass and write a marker.
+# storageClassName is omitted on purpose -> exercises truenas-iscsi (default).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iscsi-test
+  namespace: default
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iscsi-writer
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sh", "-c", "echo homelab > /data/marker && sync && sleep 3600"]
+      volumeMounts:
+        - name: v
+          mountPath: /data
+  volumes:
+    - name: v
+      persistentVolumeClaim:
+        claimName: iscsi-test

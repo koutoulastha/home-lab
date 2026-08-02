@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-config
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: infrastructure/cicd/argocd
+    directory:
+      include: '{httproute.yaml,certificates.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-config
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: infrastructure/cert-manager
+    directory:
+      include: 'clusterissuer.yaml'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

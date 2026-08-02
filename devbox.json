@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": [
+    "jq@latest",
+    "k9s@latest",
+    "kubectl@latest",
+    "kubectx@latest",
+    "kubent@latest",
+    "kubernetes-helm@latest",
+    "kustomize@latest",
+    "yq-go@latest",
+    "talhelper@latest",
+    "talosctl@latest",
+    "cilium-cli@latest",
+    "opentofu@latest",
+    "helm@latest",
+    "kubelogin-oidc@latest",
+    "kubeseal@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'Welcome to devbox!' > /dev/null",
+      "export KUBECONFIG=\"${DEVBOX_PROJECT_ROOT:-$PWD}/.kube/config.yaml\"",
+      "alias k=kubectl",
+      "export TALOSCONFIG=\"${DEVBOX_PROJECT_ROOT:-$PWD}/.talos/config.yaml\""
+    ],
+    "scripts": {
+      "test": [
+        "echo \"Error: no test specified\" && exit 1"
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# Values for the fossorial/newt Helm chart.
+# Credentials (PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET) live in the
+# manually-created `newt-auth` Secret, not in git.
+newtInstances:
+  - name: main-tunnel
+    enabled: true
+    replicas: 1
+    auth:
+      existingSecretName: newt-auth
