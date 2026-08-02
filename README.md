@@ -68,7 +68,7 @@ No plaintext secrets in git. Credentials are encrypted with **sealed-secrets** a
 ## Known gotchas
 
 - **PodSecurity:** unlabeled namespaces inherit a cluster-wide `baseline` enforce level. Workloads needing `privileged` (notably CSI **node** DaemonSets) are rejected silently — the DaemonSet reports desired > 0 / current 0 and pods never appear. Fix via `managedNamespaceMetadata` on the Application.
-- **Gateway listeners:** `infrastructure/networking/gateway/config.yaml` is not ArgoCD-managed; apply it manually when adding HTTPS listeners.
+- **Floating chart versions:** `cert-manager` and `traefik` use `targetRevision: "*"`, so `selfHeal` upgrades them unattended. Every other chart is pinned. Pin these two unless you want surprise upgrades.
 - **LAN DNS:** `*.koutoulastha.dev` resolves only through local DNS. Browser DNS-over-HTTPS breaks resolution even while `curl` works.
 - **Talos + iSCSI:** nodes need the `siderolabs/iscsi-tools` and `util-linux-tools` system extensions before any iSCSI PVC will mount. NFS needs no extension.
 
