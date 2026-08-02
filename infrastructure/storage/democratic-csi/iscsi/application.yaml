@@ -16,10 +16,10 @@ spec:
         valueFiles:
           - $values/infrastructure/storage/democratic-csi/iscsi/values.yaml
     - repoURL: https://github.com/koutoulastha/home-lab.git
-      targetRevision: version3
+      targetRevision: main
       ref: values
     - repoURL: https://github.com/koutoulastha/home-lab.git
-      targetRevision: version3
+      targetRevision: main
       path: infrastructure/storage/democratic-csi/iscsi
       directory:
         include: 'sealed-secret.yaml'

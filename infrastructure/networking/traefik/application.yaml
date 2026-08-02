@@ -16,7 +16,7 @@ spec:
         valueFiles:
           - $values/infrastructure/networking/traefik/values.yaml
     - repoURL: https://github.com/koutoulastha/home-lab.git
-      targetRevision: version3
+      targetRevision: main
       ref: values
   syncPolicy:
     automated:
@@ -37,7 +37,7 @@ spec:
     namespace: default
   source:
     repoURL: https://github.com/koutoulastha/home-lab.git
-    targetRevision: version3
+    targetRevision: main
     path: infrastructure/networking/traefik
     directory:
       include: '{httproute.yaml,certificates.yaml}'

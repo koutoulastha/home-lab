@@ -4,6 +4,15 @@ Apply-ready manifests for the plan's validation steps (Tasks 6, 7, 9). Run them
 **after** both democratic-csi releases are `Synced/Healthy` and the
 StorageClasses exist. All objects live in `default`; cleanup is at the bottom.
 
+All three passed on 2026-08-02 against the live cluster. Re-run them after any
+change to the drivers, the TrueNAS backend, or a Talos upgrade.
+
+These pods are deliberately minimal and trip the `restricted` PodSecurity
+warning on apply (`allowPrivilegeEscalation`, `runAsNonRoot`, `seccompProfile`).
+That is a warning, not a rejection — the pods are admitted and the tests are
+valid. Troubleshooting for genuine failures is in the
+[parent README](../README.md#troubleshooting).
+
 Prereq check:
 
 ```bash

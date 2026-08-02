@@ -16,7 +16,7 @@ spec:
         valueFiles:
           - $values/apps/pangolin-newt/values.yaml
     - repoURL: https://github.com/koutoulastha/home-lab.git
-      targetRevision: version3
+      targetRevision: main
       ref: values
   syncPolicy:
     automated:

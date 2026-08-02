@@ -10,7 +10,7 @@ spec:
     namespace: openspeedtest
   source:
     repoURL: https://github.com/koutoulastha/home-lab.git
-    targetRevision: version3
+    targetRevision: main
     path: apps/openspeedtest
     directory:
       exclude: '{application.yaml}'
