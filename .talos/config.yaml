@@ -1,0 +1,8 @@
+context: omni
+contexts:
+    omni:
+        endpoints:
+            - https://omni.koutoulastha.dev
+        auth:
+            siderov1:
+                identity: koutoulastha@hotmail.com
