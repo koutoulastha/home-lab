@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-webapp-dev
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab
+    targetRevision: main
+    path: apps/helm-webapp
+    helm:
+      valueFiles:
+        - values-dev.yaml
+  # No `automated` block: this app is sync-on-demand, unlike the rest of the
+  # repo. Preserved from the live object, which was created ad hoc in the
+  # ArgoCD UI in March 2026 and never tracked in git.
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

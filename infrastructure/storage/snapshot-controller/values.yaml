@@ -1,5 +1,16 @@
 # piraeus snapshot-controller chart bundles CRDs + controller
 installCRDs: true
+
+# The conversion webhook is only needed for clusters holding VolumeGroupSnapshot
+# objects in the older v1beta1/v1beta2 APIs. We use plain VolumeSnapshot (v1) via
+# democratic-csi, so it is dead weight — and with tls.autogenerate it mints a new
+# self-signed cert on every Helm render, leaving Secret/snapshot-controller-
+# conversion-webhook and the volumegroupsnapshotcontents CRD permanently
+# OutOfSync in ArgoCD. Chart 5.1.1 enables it by default; upstream flipped the
+# default to false in 5.2.0 for this reason.
+webhook:
+  enabled: false
+
 controller:
   replicaCount: 1
   resources:
