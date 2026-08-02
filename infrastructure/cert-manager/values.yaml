@@ -2,3 +2,19 @@ crds:
   enabled: true
 
 featureGates: "ExperimentalGatewayAPISupport=true"
+
+# DNS-01 self-check must bypass cluster/LAN DNS.
+#
+# koutoulastha.dev is split-horizon: the LAN resolver is authoritative for the
+# zone and serves internal A records (traefik.koutoulastha.dev -> 192.168.20.241),
+# but it knows nothing about the _acme-challenge TXT records cert-manager writes
+# to Cloudflare. By default cert-manager discovers a zone's authoritative
+# nameservers via NS lookup and queries those directly — which lands on the LAN
+# resolver and never sees the record, so challenges sit "not yet propagated"
+# forever even though the TXT record is live on public DNS.
+#
+# Forcing public recursive resolvers makes the self-check ask the same servers
+# Let's Encrypt does.
+extraArgs:
+  - --dns01-recursive-nameservers-only
+  - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53
