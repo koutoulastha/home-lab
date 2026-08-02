@@ -14,13 +14,15 @@
     "cilium-cli@latest",
     "opentofu@latest",
     "helm@latest",
-    "kubelogin-oidc@latest"
+    "kubelogin-oidc@latest",
+    "kubeseal@latest"
   ],
   "shell": {
     "init_hook": [
       "echo 'Welcome to devbox!' > /dev/null",
       "export KUBECONFIG=\"${DEVBOX_PROJECT_ROOT:-$PWD}/.kube/config.yaml\"",
-      "alias k=kubectl"
+      "alias k=kubectl",
+      "export TALOSCONFIG=\"${DEVBOX_PROJECT_ROOT:-$PWD}/.talos/config.yaml\""
     ],
     "scripts": {
       "test": [
