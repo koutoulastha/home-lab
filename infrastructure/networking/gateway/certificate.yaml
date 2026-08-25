@@ -1,0 +1,30 @@
+# Single wildcard cert for every cluster-served host on koutoulastha.dev.
+#
+# Why a wildcard rather than one Certificate per hostname:
+# `traefik.koutoulastha.dev` carries a Pangolin ACME delegation
+#   _acme-challenge.traefik.koutoulastha.dev CNAME _acme-challenge.<id>.cname.pangolin-ns.net
+# added when that host went behind the tunnel. cert-manager's self-check follows
+# _acme-challenge CNAMEs unconditionally, lands on Pangolin's TXT, and never
+# matches its own — so traefik-cert silently stopped renewing on 2026-07-19 and
+# the cert expired 2026-08-18.
+#
+# A wildcard validates against `_acme-challenge.koutoulastha.dev` (zone apex,
+# one label up), which carries no delegation. Pangolin keeps its per-host CNAME
+# and keeps issuing its own edge cert for the public path; cert-manager never
+# looks at that name again. Nothing about the tunnel has to change.
+#
+# Note: `*.koutoulastha.dev` covers exactly one label. A nested host such as
+# foo.lan.koutoulastha.dev needs `*.lan.koutoulastha.dev` added as a second SAN.
+# The apex itself is not covered and is not served by the cluster (Cloudflare).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-koutoulastha-dev
+  namespace: default
+spec:
+  secretName: wildcard-koutoulastha-dev-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.koutoulastha.dev"
