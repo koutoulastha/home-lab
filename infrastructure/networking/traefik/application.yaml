@@ -40,7 +40,7 @@ spec:
     targetRevision: main
     path: infrastructure/networking/traefik
     directory:
-      include: '{httproute.yaml,certificates.yaml}'
+      include: '{httproute.yaml}'
   syncPolicy:
     automated:
       prune: true
