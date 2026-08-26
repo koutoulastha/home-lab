@@ -13,7 +13,7 @@ spec:
     targetRevision: main
     path: infrastructure/networking/gateway
     directory:
-      include: '{config.yaml}'
+      include: '{config.yaml,certificate.yaml}'
   syncPolicy:
     automated:
       prune: true

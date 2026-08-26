@@ -1,0 +1,27 @@
+# Manages the Cilium *LoadBalancer configuration* only — the L2 announcement
+# policy and the LB IP pool. Cilium itself (the CNI) is installed by Talos/Omni
+# as part of the cluster spec and is not managed here.
+#
+# These two resources were applied by hand and tracked by nothing until now.
+# They own the 192.168.20.240-250 range that every LoadBalancer Service in the
+# cluster allocates from, so losing them takes down all external access.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium-config
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: infrastructure/networking/cilium
+    directory:
+      include: '{cilium-l2-policy.yaml,cilium-lb-pool.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -47,4 +47,22 @@ spec:
             namespace: default
       allowedRoutes:
         namespaces:
+          from: All    # Wildcard listener — supersedes the three per-host `websecure-*` listeners
+    # above. Added alongside them on purpose: they keep serving until
+    # `wildcard-koutoulastha-dev` is issued and Ready, so there is no TLS gap
+    # for argocd/speedtest (both currently renewing fine). Gateway API allows
+    # several listeners on one port with distinct hostnames, and the more
+    # specific hostname wins SNI, so the old listeners stay authoritative until
+    # they are removed in the follow-up commit.
+    - name: websecure
+      protocol: HTTPS
+      port: 8443
+      hostname: "*.koutoulastha.dev"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: wildcard-koutoulastha-dev-tls
+            namespace: default
+      allowedRoutes:
+        namespaces:
           from: All
