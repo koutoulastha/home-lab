@@ -12,48 +12,9 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
-    - name: websecure-traefik
-      protocol: HTTPS
-      port: 8443
-      hostname: traefik.koutoulastha.dev
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: traefik-koutoulastha-dev-tls
-            namespace: default
-      allowedRoutes:
-        namespaces:
-          from: All
-    - name: websecure-argocd
-      protocol: HTTPS
-      port: 8443
-      hostname: argocd.koutoulastha.dev
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: argocd-koutoulastha-dev-tls
-            namespace: default
-      allowedRoutes:
-        namespaces:
-          from: All
-    - name: websecure-openspeedtest
-      protocol: HTTPS
-      port: 8443
-      hostname: speedtest.koutoulastha.dev
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: speedtest-koutoulastha-dev-tls
-            namespace: default
-      allowedRoutes:
-        namespaces:
-          from: All    # Wildcard listener — supersedes the three per-host `websecure-*` listeners
-    # above. Added alongside them on purpose: they keep serving until
-    # `wildcard-koutoulastha-dev` is issued and Ready, so there is no TLS gap
-    # for argocd/speedtest (both currently renewing fine). Gateway API allows
-    # several listeners on one port with distinct hostnames, and the more
-    # specific hostname wins SNI, so the old listeners stay authoritative until
-    # they are removed in the follow-up commit.
+    # One wildcard listener for every cluster-served host. HTTPRoutes keep their
+    # specific hostnames and attach here because those intersect the wildcard.
+    # See certificate.yaml for why this is a wildcard and not one cert per host.
     - name: websecure
       protocol: HTTPS
       port: 8443
