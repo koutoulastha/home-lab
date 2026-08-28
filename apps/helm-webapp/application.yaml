@@ -9,7 +9,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: dev
   source:
-    repoURL: https://github.com/koutoulastha/home-lab
+    repoURL: https://github.com/koutoulastha/home-lab.git
     targetRevision: main
     path: apps/helm-webapp
     helm:
