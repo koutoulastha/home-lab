@@ -1,0 +1,44 @@
+# Unsealed secrets. Only `sealed-secret.yaml` (kubeseal output) belongs in git —
+# a plain Secret manifest here would be committed in plaintext.
+secret.yaml
+secret-*.yaml
+*.secret.yaml
+
+# Credentials / keys
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+kubeseal-cert.pem
+
+# Real cluster credentials. `.kube/config.yaml` and `.talos/config.yaml` are
+# tracked on purpose: they carry no secrets, only OIDC/Sidero exec stanzas.
+.kube/*
+!.kube/config.yaml
+.talos/*
+!.talos/config.yaml
+talosconfig
+kubeconfig
+
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Helm build output
+charts/*.tgz
+Chart.lock
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

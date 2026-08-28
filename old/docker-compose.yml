@@ -190,7 +190,7 @@ services:
       - arrs
     restart: unless-stopped
     profiles: ["radarr", "rrs"]
-    
+
   lidarr:
     image: lscr.io/linuxserver/lidarr:latest
     container_name: lidarr
@@ -319,7 +319,6 @@ services:
     environment:
       - CF_API_EMAIL=koutoulastha@hotmail.com
       # - CF_API_KEY=YOU_API_KEY
-      #- CF_DNS_API_TOKEN=lFOBNFD4MyvO364GsW5Bt8tzRGeeCQa-P5kvTqnk
       - CF_DNS_API_TOKEN=token_here
       - CF_ZONE_API_TOKEN=token_here
       # - HOST_NAME=koutoulastha.dev
