@@ -43,34 +43,6 @@
       "last_modified": "2026-08-01T16:34:20Z",
       "resolved": "github:NixOS/nixpkgs/a5cbcfe954791221bfffe2307f7d1a1bf61a871e?lastModified=1785602060&narHash=sha256-z7D96eESRM4CPV%2FXtwpwFn8IDdfLAmxz6lVWrGYXvR4%3D"
     },
-    "helm@latest": {
-      "last_modified": "2026-07-23T05:10:05Z",
-      "resolved": "github:NixOS/nixpkgs/7525d999cd850b9a488817abc89c75dc733acf17#helm",
-      "source": "devbox-search",
-      "version": "0.9.0",
-      "systems": {
-        "aarch64-linux": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/mr021qb9x0rk1p16biqy9d8c35kc2znh-helm-0.9.0",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/mr021qb9x0rk1p16biqy9d8c35kc2znh-helm-0.9.0"
-        },
-        "x86_64-linux": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/qfsxrplq9nlhq5h8n66qafpwvrrj3lsq-helm-0.9.0",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/qfsxrplq9nlhq5h8n66qafpwvrrj3lsq-helm-0.9.0"
-        }
-      }
-    },
     "jq@latest": {
       "last_modified": "2026-07-23T13:11:22Z",
       "resolved": "github:NixOS/nixpkgs/6d12004108e0e4a5cfa4bd83b14477f040b15773#jq",

@@ -13,7 +13,6 @@
     "talosctl@latest",
     "cilium-cli@latest",
     "opentofu@latest",
-    "helm@latest",
     "kubelogin-oidc@latest",
     "kubeseal@latest"
   ],
