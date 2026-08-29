@@ -155,8 +155,11 @@ kubectl apply -f apps/immich/application.yaml
 
 **Cluster `immich-db`, namespace `immich`.**
 
-- Image `ghcr.io/tensorchord/cloudnative-vectorchord:17-0.4.3` — a
-  CNPG-compatible Postgres 17 with VectorChord baked in.
+- Image `ghcr.io/tensorchord/cloudnative-vectorchord:17.9-1.1.0` — a
+  CNPG-compatible Postgres 17 with VectorChord baked in. Tags are
+  `<postgres-minor>-<vectorchord-version>`; there is no bare-major `17-x` tag.
+  Immich v3.1.0 declares `VECTORCHORD_VERSION_RANGE = '>=0.3 <2'`
+  (`server/src/constants.ts`), so VectorChord 1.1.0 is in range.
 - `instances: 1`.
 - `shared_preload_libraries: ["vchord.so"]` — required; the extension will not
   load otherwise.
@@ -167,8 +170,11 @@ kubectl apply -f apps/immich/application.yaml
   CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
   CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE;
   ```
-- The `immich` role is granted **superuser**. Immich's migrations require it.
-  This is a documented Immich requirement, not a shortcut.
+- The `immich` role is granted **superuser**. Immich creates and upgrades its
+  own extensions at boot; its own error text tells you to run
+  `CREATE EXTENSION ... CASCADE` / `ALTER EXTENSION ... UPDATE` as a superuser
+  when it cannot. Pre-creating the extensions covers first boot; superuser
+  covers every later version bump.
 - Storage: 20Gi on `truenas-iscsi`, plus a **separate 8Gi `walStorage`** so WAL
   churn during the initial library scan cannot fill the data volume.
 
@@ -181,15 +187,51 @@ DB_URL:
     secretKeyRef: { name: immich-db-app, key: uri }
 ```
 
-**Backups.** A `ScheduledBackup` with `method: volumeSnapshot`, class
-`truenas-iscsi`, `online: true`, schedule `"0 30 2 * * *"` — note CNPG cron is
-**six fields, seconds first**; a five-field expression is a silent misfire.
+**Backups.** The `Cluster` carries the snapshot config; a `ScheduledBackup`
+triggers it on `"0 30 2 * * *"` — CNPG cron is **six fields, seconds first**; a
+five-field expression is a silent misfire.
+
+```yaml
+backup:
+  volumeSnapshot:
+    className: truenas-iscsi
+    snapshotOwnerReference: backup
+    online: true
+    onlineConfiguration:
+      immediateCheckpoint: true
+      waitForArchive: false
+```
+
+`waitForArchive: false` is **required**, not a tuning choice. It defaults to
+`true`, which makes `pg_backup_stop()` wait for a WAL archiver to process the
+final segment — and this cluster has no WAL archive, so every backup would hang.
+The alternative CNPG recommends, `online: false`, fences the primary for the
+duration; on a single-instance cluster that is nightly downtime. Hot backups
+stay consistent here because CNPG snapshots `storage` and `walStorage` together,
+so the WAL needed to make the snapshot consistent is inside the backup itself —
+a second reason the separate WAL volume earns its place.
 
 CNPG volume snapshots **have no retention policy** (retention applies only to
 object-store backups). Without intervention TrueNAS accumulates snapshots
 forever. A small CronJob — with its own ServiceAccount and a Role over
-`backups.postgresql.cnpg.io` — deletes all but the newest 7 `Backup` objects,
-which cascades to the VolumeSnapshots.
+`backups.postgresql.cnpg.io` — deletes all but the newest 7 `Backup` objects.
+
+That prune only reclaims space if the whole ownership chain is intact, and two
+links in it default the wrong way:
+
+1. `snapshotOwnerReference` defaults to **`none`**, meaning VolumeSnapshots
+   outlive the `Backup` that made them. Setting it to `backup` (above) is what
+   makes deleting a Backup delete its snapshot.
+2. The `VolumeSnapshotClass`'s `deletionPolicy` then decides whether the
+   underlying ZFS snapshot goes with it. `truenas-iscsi` does not set it
+   explicitly, so it takes the chart default — **verify it reads `Delete`**
+   before trusting the prune:
+   `kubectl get volumesnapshotclass truenas-iscsi -o jsonpath='{.deletionPolicy}'`.
+   If it reads `Retain`, the Kubernetes objects vanish and TrueNAS still fills.
+
+The prune CronJob runs `docker.io/alpine/kubectl`, not
+`registry.k8s.io/kubectl` — the upstream image is distroless and has no shell,
+so a sort-and-slice script cannot run in it.
 
 ## Application
 
@@ -290,7 +332,7 @@ the internet. Mitigations are day-one admin steps, listed below.
 ```bash
 # 1. operator
 kubectl apply -f infrastructure/database/cloudnative-pg/application.yaml
-kubectl -n cnpg-system rollout status deploy/cnpg-cloudnative-pg
+kubectl -n cnpg-system rollout status deploy/cloudnative-pg
 
 # 2. database (creates ns immich)
 kubectl apply -f apps/immich/db/application.yaml
@@ -339,7 +381,8 @@ kubectl -n immich rollout status deploy/immich-server
 
 ## Open Item for Implementation
 
-Confirm that `CREATE EXTENSION vchord CASCADE` resolves pgvector inside
-`cloudnative-vectorchord:17-0.4.3`. If it does not, switch to the `-pgvector`
-image variant. This is a one-command check once the Cluster is up and does not
-change any other part of the design.
+Confirm that `CREATE EXTENSION vchord CASCADE` resolves its `vector`
+dependency inside `cloudnative-vectorchord:17.9-1.1.0`. If it does not, add an
+explicit `CREATE EXTENSION IF NOT EXISTS vector;` ahead of it in
+`postInitApplicationSQL`. This is a one-query check once the Cluster is up and
+changes no other part of the design.
