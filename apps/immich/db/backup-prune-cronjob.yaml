@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: immich-db-backup-prune
+  namespace: immich
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: immich-db-backup-prune
+  namespace: immich
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["backups"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: immich-db-backup-prune
+  namespace: immich
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: immich-db-backup-prune
+subjects:
+  - kind: ServiceAccount
+    name: immich-db-backup-prune
+    namespace: immich
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: immich-db-backup-prune
+  namespace: immich
+spec:
+  # Standard five-field cron — this is a Kubernetes CronJob, not a CNPG
+  # ScheduledBackup. 03:30 daily, an hour after the backup runs.
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: immich-db-backup-prune
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: prune
+              # NOT registry.k8s.io/kubectl — that image is distroless and has
+              # no shell, so this script could not run in it.
+              image: docker.io/alpine/kubectl:1.36.4
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  KEEP=7
+                  NS=immich
+                  ALL=$(kubectl -n "$NS" get backups.postgresql.cnpg.io \
+                          --sort-by=.metadata.creationTimestamp -o name)
+                  TOTAL=$(printf '%s\n' "$ALL" | grep -c . || true)
+                  if [ "$TOTAL" -le "$KEEP" ]; then
+                    echo "keeping all $TOTAL backup(s), limit is $KEEP"
+                    exit 0
+                  fi
+                  DELETE=$((TOTAL - KEEP))
+                  echo "$TOTAL backup(s) present, deleting oldest $DELETE"
+                  printf '%s\n' "$ALL" | head -n "$DELETE" | while read -r b; do
+                    echo "deleting $b"
+                    kubectl -n "$NS" delete "$b"
+                  done
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi
