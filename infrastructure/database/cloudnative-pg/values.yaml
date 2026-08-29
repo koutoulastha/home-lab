@@ -1,0 +1,21 @@
+# CloudNativePG operator. Stock defaults suit a single-cluster homelab; this
+# file exists so the Application has a $values target and somewhere to record
+# deviations.
+replicaCount: 1
+
+# The chart installs the CRDs. ServerSideApply=true on the Application is not
+# optional because of them: the Cluster CRD is far past the 262144-byte
+# last-applied-configuration annotation that client-side apply writes.
+crds:
+  create: true
+
+# No Prometheus Operator in this cluster.
+monitoring:
+  podMonitorEnabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    memory: 200Mi
