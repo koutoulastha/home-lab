@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-library
+  namespace: immich
+spec:
+  # The Immich chart cannot create this volume; it only consumes an existing
+  # claim. RWO is fine — the server Deployment is the single writer.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: truenas-iscsi
+  resources:
+    requests:
+      # A starting point, not a ceiling: truenas-iscsi has
+      # allowVolumeExpansion, so growing this later is an edit.
+      storage: 500Gi

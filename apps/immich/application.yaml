@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: immich
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: immich
+  sources:
+    - repoURL: https://immich-app.github.io/immich-charts
+      chart: immich
+      targetRevision: 0.12.0
+      helm:
+        valueFiles:
+          # $values paths are always relative to the repo root, never to the
+          # `path` of the source that carries the ref.
+          - $values/apps/immich/values.yaml
+    # One git source doing two jobs: supplying the values file above, and
+    # rendering pvc.yaml + httproute.yaml. A source with `ref` may not also
+    # set `chart`, which is why the chart is a separate source.
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      ref: values
+      path: apps/immich
+      directory:
+        exclude: '{application.yaml,values.yaml,db}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

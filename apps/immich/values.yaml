@@ -1,0 +1,88 @@
+# Immich chart 0.12.0. Values not set here come from the chart's own
+# values.yaml — notably REDIS_HOSTNAME and IMMICH_MACHINE_LEARNING_URL, which
+# are already wired correctly and are deliberately not repeated. The chart's
+# nginx-flavoured ingress also stays at its default (disabled); ingress here is
+# the HTTPRoute in this directory.
+
+# Shared by server, machine-learning, and valkey.
+controllers:
+  main:
+    containers:
+      main:
+        image:
+          # Chart default is v2.6.3, a full major behind. Server and
+          # machine-learning must always carry the same tag. (valkey pins its
+          # own image and is unaffected.)
+          tag: v3.1.0
+        env:
+          # CNPG generates this Secret; nothing credential-shaped is in git.
+          DB_URL:
+            valueFrom:
+              secretKeyRef:
+                name: immich-db-app
+                key: uri
+
+defaultPodOptions:
+  dnsConfig:
+    options:
+      # Immich's Alpine images hit a musl resolver bug when nodes set a search
+      # domain. Pre-empting it; this cluster has a history of DNS pain.
+      - name: ndots
+        value: "1"
+
+immich:
+  persistence:
+    library:
+      existingClaim: immich-library
+  # Left empty on purpose. Setting it mounts an immich-config.yaml via
+  # IMMICH_CONFIG_FILE, which makes every admin setting in the web UI
+  # read-only. Settings live in Postgres instead, covered by the DB snapshots.
+  configuration: {}
+
+valkey:
+  # Chart default is false, while the chart's default REDIS_HOSTNAME already
+  # points at <release>-valkey. The one place where its default value and its
+  # default wiring disagree.
+  enabled: true
+
+server:
+  controllers:
+    main:
+      # The chart hardcodes RollingUpdate. Against an RWO iSCSI library volume
+      # that deadlocks every upgrade: the new pod cannot attach a volume the
+      # old pod still holds, and the old pod will not terminate until the new
+      # one is ready. Our value wins because the chart applies its hardcoded
+      # values with Helm's `merge`, which only fills gaps.
+      strategy: Recreate
+      containers:
+        main:
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 2Gi
+
+machine-learning:
+  persistence:
+    cache:
+      enabled: true
+      # Chart default is emptyDir, which re-downloads ~1-2GB of CLIP and face
+      # models on every restart.
+      type: persistentVolumeClaim
+      accessMode: ReadWriteOnce
+      storageClass: truenas-iscsi
+      size: 10Gi
+  controllers:
+    main:
+      containers:
+        main:
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              # CPU-only CLIP inference is bursty; the initial library scan
+              # will use whatever it is given.
+              cpu: "4"
+              memory: 3Gi
