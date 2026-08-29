@@ -1,0 +1,68 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: immich-db
+  namespace: immich
+spec:
+  instances: 1
+
+  # Tags are <postgres-minor>-<vectorchord-version>; there is no bare `17-x`.
+  # Immich v3.1.0 accepts VectorChord '>=0.3 <2' (server/src/constants.ts).
+  imageName: ghcr.io/tensorchord/cloudnative-vectorchord:17.9-1.1.0
+
+  postgresql:
+    # Without this the vchord extension cannot load and the instance never
+    # finishes starting.
+    shared_preload_libraries:
+      - vchord.so
+    parameters:
+      shared_buffers: 512MB
+      max_wal_size: 2GB
+      wal_compression: "on"
+
+  bootstrap:
+    initdb:
+      database: immich
+      owner: immich
+      # Immich creates and upgrades its own extensions at boot and needs
+      # superuser to do it. Runs against the `postgres` database.
+      postInitSQL:
+        - ALTER ROLE immich WITH SUPERUSER;
+      # Runs against the `immich` database. Pre-creating covers first boot;
+      # the superuser grant above covers later version bumps.
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
+        - CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE;
+
+  storage:
+    size: 20Gi
+    storageClass: truenas-iscsi
+
+  # A separate WAL volume keeps WAL churn during the initial library scan from
+  # filling PGDATA, and makes the snapshot backups below self-consistent:
+  # CNPG snapshots storage and walStorage together.
+  walStorage:
+    size: 8Gi
+    storageClass: truenas-iscsi
+
+  backup:
+    volumeSnapshot:
+      className: truenas-iscsi
+      # Defaults to `none`, which leaves VolumeSnapshots behind when their
+      # Backup is deleted — the prune CronJob would free nothing.
+      snapshotOwnerReference: backup
+      online: true
+      onlineConfiguration:
+        immediateCheckpoint: true
+        # Defaults to true, which waits for a WAL archiver to process the last
+        # segment. There is no WAL archive here, so every backup would hang.
+        # The alternative (online: false) fences the primary — on a
+        # single-instance cluster that is nightly downtime.
+        waitForArchive: false
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      memory: 2Gi

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: immich-db
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: immich
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: apps/immich/db
+    directory:
+      exclude: '{application.yaml}'
+  syncPolicy:
+    automated:
+      # prune is deliberately false: the database must not be inside the
+      # blast radius of a mistake in apps/immich. selfHeal still corrects
+      # drift on the resources that are here.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

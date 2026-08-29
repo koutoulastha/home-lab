@@ -28,6 +28,8 @@ kubectl -n argocd get applications
 infrastructure/
   cicd/argocd/            # ArgoCD managing itself
   cert-manager/           # + ClusterIssuer (Cloudflare DNS-01)
+  database/
+    cloudnative-pg/       # Postgres operator — see apps/immich/db
   networking/
     cilium/               # CNI, L2 announcements, LB IP pool
     traefik/              # ingress via Gateway API
@@ -39,6 +41,7 @@ infrastructure/
 apps/
   openspeedtest/
   pangolin-newt/          # Pangolin tunnel agent
+  immich/                 # photos; db/ is a separate, never-pruned Application
   helm-webapp/            # demo chart, deployed to the `dev` namespace (manual sync)
 docs/superpowers/         # design specs + implementation plans
 old/                      # pre-Kubernetes docker-compose setup
