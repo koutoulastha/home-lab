@@ -227,7 +227,11 @@ links in it default the wrong way:
    explicitly, so it takes the chart default — **verify it reads `Delete`**
    before trusting the prune:
    `kubectl get volumesnapshotclass truenas-iscsi -o jsonpath='{.deletionPolicy}'`.
-   If it reads `Retain`, the Kubernetes objects vanish and TrueNAS still fills.
+   If it reads `Retain`, the Kubernetes objects vanish and TrueNAS still
+   fills; fix it by setting `deletionPolicy: Delete` under
+   `volumeSnapshotClasses[0]` in
+   `infrastructure/storage/democratic-csi/iscsi/values.yaml` — a different
+   Application, so it is a separate change and sync.
 
 The prune CronJob runs `docker.io/alpine/kubectl`, not
 `registry.k8s.io/kubectl` — the upstream image is distroless and has no shell,
@@ -241,12 +245,19 @@ so a sort-and-slice script cannot run in it.
   third-party integrations; they do not change the container/env/volume shape
   the chart builds. **Server and ML tags must always match.**
 
-- **`server.controllers.main.strategy: Recreate`** — not optional. The chart
-  hardcodes `RollingUpdate`, which deadlocks against an RWO iSCSI volume: the
-  new pod cannot attach a volume the old pod still holds, and the old pod will
-  not terminate until the new one is ready. The chart applies its hardcoded
-  values with Helm's `merge` (gap-filling only), so our value wins. Cost: brief
-  downtime on each upgrade, which is correct for a single-writer volume.
+- **`server.controllers.main.strategy: Recreate`** and
+  **`machine-learning.controllers.main.strategy: Recreate`** — not optional on
+  either. The chart hardcodes `RollingUpdate` for both workloads
+  (`templates/machine-learning.yaml`, same as the server's template), which
+  deadlocks against an RWO volume: the new pod cannot attach a volume the old
+  pod still holds, and the old pod will not terminate until the new one is
+  ready. The server hits this on the library volume; machine-learning hits it
+  too because this design gives its model cache an RWO `truenas-iscsi` PVC
+  where the chart assumed RWX/`emptyDir` — the exact pairing the chart's
+  hardcoded default deadlocks against. The chart applies its hardcoded values
+  with Helm's `merge` (gap-filling only), so our value wins in both places.
+  Cost: brief downtime on each upgrade, which is correct for a single-writer
+  volume.
 
 - **Storage:**
 
@@ -258,6 +269,13 @@ so a sort-and-slice script cannot run in it.
 
   500Gi is a starting point, not a ceiling: `truenas-iscsi` has
   `allowVolumeExpansion: true`, so growing it later is an edit, not a migration.
+
+  `immich-library` carries `argocd.argoproj.io/sync-options: Prune=false`.
+  `apps/immich` syncs with `prune: true` — the database gets a whole separate,
+  never-pruned Application to keep an app-level mistake from deleting it, but
+  that reasoning was never applied to the photos, which are the irreplaceable
+  part. `truenas-iscsi` has `reclaimPolicy: Delete`, so without the annotation
+  a pruned PVC destroys the zvol behind it.
 
 - **`valkey.enabled: true`** — the chart defaults this to `false` while its
   default `REDIS_HOSTNAME` already points at `<release>-valkey`. The one place

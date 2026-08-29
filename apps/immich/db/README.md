@@ -35,16 +35,95 @@ Deleting a `Backup` only reclaims space if every link holds:
 kubectl get volumesnapshotclass truenas-iscsi -o jsonpath='{.deletionPolicy}'
 ```
 
+   If it reads `Retain` instead, set `deletionPolicy: Delete` under
+   `volumeSnapshotClasses[0]` in
+   `infrastructure/storage/democratic-csi/iscsi/values.yaml` — a different
+   Application, so it's a separate change and sync.
+
 ## Restore
 
-List available backups:
+Restoring replaces the cluster. There is **no PITR** — recovery lands on the
+chosen snapshot, so up to 24h of metadata can be lost.
 
-```bash
-kubectl -n immich get backups.postgresql.cnpg.io \
-  --sort-by=.metadata.creationTimestamp
-```
+1. **Stop ArgoCD from fighting the restore, first.** `apps/immich/db` syncs
+   with `selfHeal: true`, and git still holds the `bootstrap.initdb` version
+   of `cluster.yaml`. A hand-applied recovery `Cluster` gets reverted within
+   minutes unless you do one of these first:
 
-Restoring replaces the cluster: scale Immich down, delete the `Cluster`, and
-recreate it with a `bootstrap.recovery.volumeSnapshots` stanza pointing at the
-chosen snapshot, then scale Immich back up. There is **no PITR** — recovery
-lands on the snapshot, so up to 24h of metadata can be lost.
+   ```bash
+   argocd app set immich-db --sync-policy none
+   ```
+
+   or commit the recovery stanza (step 4) to `main` before applying it.
+
+2. **List the snapshots to choose from:**
+
+   ```bash
+   kubectl -n immich get volumesnapshot
+   ```
+
+   Each backup produces two snapshots sharing a timestamp — one for PGDATA
+   (`storage`), one for WAL (`walStorage`). You need both names below.
+
+3. **Scale Immich down** so nothing writes during recovery:
+
+   ```bash
+   kubectl -n immich scale deploy/immich-server --replicas=0
+   ```
+
+4. **Delete the existing `Cluster` and recreate it with a recovery bootstrap**
+   referencing both snapshots:
+
+   ```bash
+   kubectl -n immich delete cluster immich-db
+   ```
+
+   ```yaml
+   apiVersion: postgresql.cnpg.io/v1
+   kind: Cluster
+   metadata:
+     name: immich-db
+     namespace: immich
+   spec:
+     instances: 1
+     imageName: ghcr.io/tensorchord/cloudnative-vectorchord:17.9-1.1.0
+     postgresql:
+       shared_preload_libraries:
+         - vchord.so
+     bootstrap:
+       recovery:
+         volumeSnapshots:
+           storage:
+             name: <PGDATA-SNAPSHOT-NAME>
+             kind: VolumeSnapshot
+             apiGroup: snapshot.storage.k8s.io
+           walStorage:
+             name: <WAL-SNAPSHOT-NAME>
+             kind: VolumeSnapshot
+             apiGroup: snapshot.storage.k8s.io
+     storage:
+       size: 20Gi
+       storageClass: truenas-iscsi
+     walStorage:
+       size: 8Gi
+       storageClass: truenas-iscsi
+   ```
+
+   `bootstrap.recovery` replaces `bootstrap.initdb` entirely — the
+   `postInitSQL`/`postInitApplicationSQL` blocks from the normal `cluster.yaml`
+   do not run on recovery, and don't need to: the superuser grant and the
+   extensions are already inside the restored volume.
+
+5. **Scale Immich back up:**
+
+   ```bash
+   kubectl -n immich scale deploy/immich-server --replicas=1
+   ```
+
+6. **Restore normal operation.** Put `cluster.yaml` back to its `main` version
+   (revert the commit from step 1, or discard the hand-applied change if you
+   used `sync-policy none`), then re-enable auto-sync:
+
+   ```bash
+   argocd app set immich-db --sync-policy automated
+   ```

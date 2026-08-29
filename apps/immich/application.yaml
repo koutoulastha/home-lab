@@ -25,7 +25,10 @@ spec:
       ref: values
       path: apps/immich
       directory:
-        exclude: '{application.yaml,values.yaml,db}'
+        # recurse defaults to false, which is what actually keeps db/ out of
+        # this Application. The glob below is only a backstop for if recurse
+        # is ever turned on — it needs db/** (not db) to match paths under it.
+        exclude: '{application.yaml,values.yaml,db/**}'
   syncPolicy:
     automated:
       prune: true

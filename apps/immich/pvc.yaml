@@ -3,6 +3,14 @@ kind: PersistentVolumeClaim
 metadata:
   name: immich-library
   namespace: immich
+  annotations:
+    # This PVC is rendered by the apps/immich Application, which syncs with
+    # prune: true. The database gets a whole separate prune:false Application
+    # so an app-level mistake can never delete it; the photos are the
+    # irreplaceable part and need the same protection here, since they can't
+    # get a separate Application. truenas-iscsi's reclaimPolicy is Delete, so
+    # without this a pruned PVC takes the zvol behind it with it.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   # The Immich chart cannot create this volume; it only consumes an existing
   # claim. RWO is fine — the server Deployment is the single writer.

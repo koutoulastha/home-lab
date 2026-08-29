@@ -75,6 +75,12 @@ machine-learning:
       size: 10Gi
   controllers:
     main:
+      # Same RWO deadlock as the server, above: the chart hardcodes
+      # RollingUpdate in templates/machine-learning.yaml too, and this branch
+      # gives the ML cache an RWO truenas-iscsi PVC where the chart assumed
+      # RWX/emptyDir. Without this, upgrades deadlock here exactly like they
+      # would on the server.
+      strategy: Recreate
       containers:
         main:
           resources:
