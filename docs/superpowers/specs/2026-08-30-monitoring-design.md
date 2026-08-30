@@ -85,6 +85,7 @@ node-exporter (all nodes), kube-state-metrics, kubelet/cAdvisor, kube-apiserver.
 | File | Change | Why it matters |
 |---|---|---|
 | `infrastructure/networking/traefik/values.yaml` | enable `metrics.prometheus.service` and `metrics.prometheus.serviceMonitor` | Request rate, latency percentiles, and status codes per HTTPRoute. The highest-value signal available, since every service is reached through Traefik. |
+| `infrastructure/cert-manager/values.yaml` | `prometheus.servicemonitor.enabled: true` (note the chart's all-lowercase key) | Exposes `certmanager_certificate_expiration_timestamp_seconds`, which the wildcard-cert-expiry alert depends on. Without it that alert can never fire. |
 | `infrastructure/database/cloudnative-pg/values.yaml` | `monitoring.podMonitorEnabled: true` | Replaces the now-obsolete `# No Prometheus Operator in this cluster.` comment. |
 | `apps/immich/db/cluster.yaml` | `spec.monitoring.enablePodMonitor: true` | Postgres connection counts, replication state, backup age. |
 
