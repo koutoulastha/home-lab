@@ -630,11 +630,20 @@ Expected: `Completed loading of configuration file`, with no `error` lines.
 
 An untested alert path is indistinguishable from a working one right up until you need it.
 
+Note the annotation quoting: the value contains spaces, so it must be double-quoted *inside* a
+single-quoted argument. Written as `--annotation=description="..."` the shell strips the inner
+quotes and amtool's matcher parser rejects it, falling back to a legacy parser with a warning.
+
+A clean `Completed loading of configuration file` in the Alertmanager log is NOT evidence the
+alert path works: `url_file` is resolved at notification time, not at config load, so a missing
+secret file starts up silently and only fails when an alert actually fires. This smoke test is
+the first thing that proves delivery end to end.
+
 ```bash
 kubectl -n monitoring exec alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- \
   amtool alert add \
     alertname=PlanSmokeTest severity=critical namespace=monitoring \
-    --annotation=description="synthetic test from the monitoring implementation plan" \
+    --annotation='description="synthetic critical test"' \
     --alertmanager.url=http://localhost:9093
 ```
 
@@ -648,7 +657,7 @@ Subscribe the phone first: install the ntfy app and subscribe to the topic from 
 kubectl -n monitoring exec alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- \
   amtool alert add \
     alertname=PlanSmokeTestWarning severity=warning namespace=monitoring \
-    --annotation=description="synthetic low-priority test" \
+    --annotation='description="synthetic warning test"' \
     --alertmanager.url=http://localhost:9093
 ```
 
