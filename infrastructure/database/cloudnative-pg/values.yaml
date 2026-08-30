@@ -9,9 +9,9 @@ replicaCount: 1
 crds:
   create: true
 
-# No Prometheus Operator in this cluster.
+# Prometheus Operator is installed (infrastructure/monitoring/kube-prometheus-stack).
 monitoring:
-  podMonitorEnabled: false
+  podMonitorEnabled: true
 
 resources:
   requests:

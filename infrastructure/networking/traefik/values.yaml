@@ -26,3 +26,16 @@ api:
 ingressRoute:
   dashboard:
     enabled: true
+
+# Prometheus metrics. `service.enabled` creates the dedicated metrics Service
+# the ServiceMonitor scrapes; without it the ServiceMonitor has no endpoints.
+# addRoutersLabels is off by default and is what yields per-HTTPRoute request
+# rate, latency and status codes — the highest-value signal in the cluster,
+# since every service is reached through Traefik.
+metrics:
+  prometheus:
+    addRoutersLabels: true
+    service:
+      enabled: true
+    serviceMonitor:
+      enabled: true

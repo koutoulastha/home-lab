@@ -18,3 +18,11 @@ featureGates: "ExperimentalGatewayAPISupport=true"
 extraArgs:
   - --dns01-recursive-nameservers-only
   - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53
+
+# Exposes certmanager_certificate_expiration_timestamp_seconds, which the
+# curated "wildcard cert expiring" alert in Task 7 depends on. Note the chart
+# spells this key `servicemonitor`, all lowercase.
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: true
