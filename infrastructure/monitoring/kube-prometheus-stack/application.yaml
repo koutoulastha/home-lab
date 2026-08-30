@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 88.6.1
+      helm:
+        valueFiles:
+          # $values paths are always relative to the repo root, never to the
+          # `path` of the source that carries the ref.
+          - $values/infrastructure/monitoring/kube-prometheus-stack/values.yaml
+    # One git source doing two jobs: supplying the values file above, and
+    # rendering the plain manifests in this directory (sealed secrets in Task 2,
+    # alertrules.yaml in Task 7, httproute.yaml in Task 8). Because the path is
+    # already declared here, those later files sync with no re-registration.
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      ref: values
+      path: infrastructure/monitoring/kube-prometheus-stack
+      directory:
+        exclude: '{application.yaml,values.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Not optional: the Prometheus Operator CRDs exceed the client-side apply
+      # annotation limit and the first sync fails outright without this.
+      - ServerSideApply=true
+      - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        # node-exporter is a DaemonSet using hostNetwork, hostPID and hostPath
+        # mounts into /proc and /sys. Under the cluster-wide `baseline` enforce
+        # level it is rejected SILENTLY — desired > 0, current 0, no pods, no
+        # events. Identical failure to the CSI node DaemonSets.
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/enforce-version: latest
