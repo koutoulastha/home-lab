@@ -67,6 +67,9 @@ prometheus:
 
 alertmanager:
   alertmanagerSpec:
+    # Mounts each key at /etc/alertmanager/secrets/alertmanager-endpoints/<key>.
+    secrets:
+      - alertmanager-endpoints
     storage:
       volumeClaimTemplate:
         spec:
@@ -74,8 +77,63 @@ alertmanager:
           resources:
             requests:
               storage: 2Gi
-  # Routing is deliberately left at the chart default (everything to the "null"
-  # receiver) until Task 4. Task 3 proves the stack healthy in isolation first.
+
+  # The routing tree stays readable in git; only the endpoints are sealed, read
+  # via url_file. What the two ntfy URLs differ in, since it is not visible here:
+  #   ntfy-critical-url -> priority=5 (bypasses Do Not Disturb)
+  #   ntfy-warning-url  -> priority=2 (arrives silently)
+  config:
+    global:
+      resolve_timeout: 5m
+
+    inhibit_rules:
+      # A critical alert makes its own warning redundant.
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity = "warning"']
+        equal: [alertname, namespace]
+      # A node that is gone explains everything else reported about that node.
+      # This only suppresses alerts that carry a `node` label; alerts labelled
+      # only with `instance` are not matched and will still fire.
+      - source_matchers: ['alertname =~ "KubeNodeNotReady|KubeNodeUnreachable"']
+        target_matchers: ['severity =~ "warning|critical"']
+        equal: [node]
+      # Ships with the stack: silences info-level noise during any active warning.
+      - source_matchers: ['alertname = "InfoInhibitor"']
+        target_matchers: ['severity = "info"']
+        equal: [namespace]
+
+    route:
+      group_by: [alertname, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      # An unresolved problem nags four times a day, not every five minutes.
+      repeat_interval: 4h
+      receiver: ntfy-warning
+      routes:
+        # Watchdog fires permanently by design. Healthchecks.io alerts when
+        # these pings STOP — the only signal for total cluster or Prometheus
+        # failure, in which state every other alert here is silent.
+        - receiver: deadmans-switch
+          matchers: ['alertname = "Watchdog"']
+          group_wait: 0s
+          group_interval: 5m
+          repeat_interval: 5m
+        - receiver: ntfy-critical
+          matchers: ['severity = "critical"']
+
+    receivers:
+      - name: ntfy-warning
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/alertmanager-endpoints/ntfy-warning-url
+            send_resolved: true
+      - name: ntfy-critical
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/alertmanager-endpoints/ntfy-critical-url
+            send_resolved: true
+      - name: deadmans-switch
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/alertmanager-endpoints/deadmans-url
+            send_resolved: false
 
 grafana:
   # Password comes from the sealed secret created in Task 2. Never the chart's
