@@ -1,0 +1,98 @@
+# kube-prometheus-stack 88.6.1 (Prometheus Operator v0.93.1).
+#
+# Chart CRDs are far past the 262144-byte last-applied-configuration annotation
+# that client-side apply writes, exactly like the CNPG Cluster CRD. The
+# Application sets ServerSideApply=true for this reason; it is not optional.
+crds:
+  enabled: true
+
+# --- Targets this cluster does not have -------------------------------------
+#
+# Talos binds controller-manager, scheduler and etcd metrics to 127.0.0.1, so
+# Prometheus cannot reach them from a pod. The chart enables ServiceMonitors for
+# all three by default; left on, they sit permanently red and fire TargetDown
+# forever. Re-enable only after setting bind-address: 0.0.0.0 (and etcd's
+# listen-metrics-urls) in the Talos machine config via Omni.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+# Cilium runs in kube-proxy replacement mode — there is no kube-proxy DaemonSet.
+kubeProxy:
+  enabled: false
+
+# Keep the full upstream alerting rule set. Rules with no matching target are
+# inert; it is unreachable *targets* that generate noise, and those are off above.
+defaultRules:
+  create: true
+
+prometheus:
+  prometheusSpec:
+    # The chart defaults every selector to "only objects carrying this release's
+    # Helm labels". That would silently ignore the Traefik ServiceMonitor, the
+    # CNPG PodMonitor, our Probes and our PrometheusRule. Opening all four is
+    # what makes Tasks 5, 6 and 7 work at all.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+
+    retention: 90d
+    # retentionSize is the backstop and is not optional. Time-based retention
+    # alone does not bound disk: a cardinality spike fills the PVC well before
+    # 90 days elapse, and a full PVC halts TSDB writes — monitoring dies exactly
+    # when something interesting is happening. 42GB leaves headroom under 50Gi.
+    retentionSize: 42GB
+
+    # Memory scales with active series, not retention, so 90d does not change
+    # this. An unbounded Prometheus is the component most likely to OOM a node.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 2Gi
+      limits:
+        memory: 4Gi
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          # storageClassName omitted on purpose: truenas-iscsi is the default
+          # class. Thin provisioning means 50Gi costs nothing until written.
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+  # Routing is deliberately left at the chart default (everything to the "null"
+  # receiver) until Task 4. Task 3 proves the stack healthy in isolation first.
+
+grafana:
+  # Password comes from the sealed secret created in Task 2. Never the chart's
+  # default of "prom-operator".
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: true
+    size: 5Gi
+    accessModes: ["ReadWriteOnce"]
+  # Public exposure settings (root_url, signup, cookies) are added in Task 8,
+  # together with the HTTPRoute that makes them true. Until then Grafana is
+  # ClusterIP-only and reachable solely by port-forward.
+
+nodeExporter:
+  enabled: true
+kubeStateMetrics:
+  enabled: true
