@@ -161,6 +161,13 @@ kubectl apply -f apps/immich/application.yaml
   Immich v3.1.0 declares `VECTORCHORD_VERSION_RANGE = '>=0.3 <2'`
   (`server/src/constants.ts`), so VectorChord 1.1.0 is in range.
 - `instances: 1`.
+- `enablePDB: false`. CNPG defaults this to `true`, which creates a
+  PodDisruptionBudget that denies every eviction of the only pod — the
+  operator deliberately refuses to let a node hosting a single-instance
+  cluster be drained, because it has no replica to switch over to. That turns
+  every Talos/Omni node upgrade into a failed drain. The budget protects
+  nothing on one instance, so disabling it costs no availability that
+  `instances: 1` had not already conceded.
 - `shared_preload_libraries: ["vchord.so"]` — required; the extension will not
   load otherwise.
 - Parameters: `shared_buffers=512MB`, `max_wal_size=2GB`,
@@ -395,7 +402,10 @@ kubectl -n immich rollout status deploy/immich-server
   by a strong admin password and disabled registration.
 - **Single instance, no HA.** A node failure means downtime until reschedule,
   and RWO attach/detach can make that slow. Acceptable for a homelab photo
-  service.
+  service. The same applies to planned maintenance: with `enablePDB: false`,
+  draining the DB's node takes Immich down until the pod reschedules and the
+  iSCSI volume reattaches. The alternative — leaving the PDB on — does not buy
+  availability, it just makes the drain fail.
 
 ## Open Item for Implementation
 

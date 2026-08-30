@@ -6,6 +6,14 @@ metadata:
 spec:
   instances: 1
 
+  # Defaults to true, which creates a PodDisruptionBudget that denies every
+  # eviction of the only pod -- CNPG deliberately blocks draining the node
+  # hosting a single-instance cluster, since it cannot switch over first.
+  # That fails `talosctl upgrade` / Omni node upgrades on a 5m drain timeout.
+  # The budget protects nothing here: one instance cannot survive its node
+  # going away regardless, so all it does is block maintenance.
+  enablePDB: false
+
   # Tags are <postgres-minor>-<vectorchord-version>; there is no bare `17-x`.
   # Immich v3.1.0 accepts VectorChord '>=0.3 <2' (server/src/constants.ts).
   imageName: ghcr.io/tensorchord/cloudnative-vectorchord:17.9-1.1.0
