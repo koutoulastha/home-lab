@@ -315,7 +315,9 @@ This is the only signal for "the cluster is down" or "Prometheus itself died" �
 
 - [ ] **Step 3: Seal both secrets**
 
-Substitute the three URLs from Steps 1–2 and a strong Grafana password. Run in `devbox shell`:
+Substitute the three URLs from Steps 1–2 and a strong Grafana password. Run in `devbox shell`.
+
+**Keep the single quotes around every substituted value.** The ntfy URLs contain `&`; unquoted, the shell splits the command into background jobs and you get a half-written secret plus a pile of `No such file or directory` errors.
 
 ```bash
 cd /home/koutoulastha/workspace/homelab
