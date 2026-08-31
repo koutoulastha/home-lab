@@ -6,6 +6,11 @@ metadata:
 spec:
   instances: 1
 
+  # Postgres connection counts, replication state and backup age. The backup-age
+  # metric is what the curated "backup stopped running" alert in Task 7 reads.
+  monitoring:
+    enablePodMonitor: true
+
   # Defaults to true, which creates a PodDisruptionBudget that denies every
   # eviction of the only pod -- CNPG deliberately blocks draining the node
   # hosting a single-instance cluster, since it cannot switch over first.
