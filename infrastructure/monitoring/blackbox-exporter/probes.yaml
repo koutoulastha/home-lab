@@ -1,0 +1,42 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: public-hosts-internal
+  namespace: monitoring
+spec:
+  interval: 60s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter:9115
+  targets:
+    staticConfig:
+      # LAN-resolved by design. Split-horizon DNS returns the private address
+      # from inside the cluster, so these test Traefik and the workloads behind
+      # it, not the public path.
+      static:
+        - https://photos.koutoulastha.dev
+        - https://grafana.koutoulastha.dev
+        - https://argocd.koutoulastha.dev
+        - https://traefik.koutoulastha.dev
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: pangolin-tunnel
+  namespace: monitoring
+spec:
+  interval: 60s
+  module: http_2xx_pangolin
+  prober:
+    url: blackbox-exporter:9115
+  targets:
+    staticConfig:
+      static:
+        # Pangolin's public edge, by IP. This probe failing while
+        # public-hosts-internal passes means the public path is broken:
+        # public DNS, the edge itself, or its TLS certificate. A dead Newt
+        # tunnel is NOT covered — see the module comment in values.yaml.
+        - https://130.110.2.46/
+      labels:
+        path: pangolin-public

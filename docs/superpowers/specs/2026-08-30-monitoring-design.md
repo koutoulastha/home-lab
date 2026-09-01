@@ -14,7 +14,7 @@ Concretely, on completion:
 - Grafana is reachable on the LAN and publicly through Pangolin, behind authentication.
 - Alerts push to a phone via ntfy, with severity mapped to notification priority.
 - An external dead-man's-switch alerts when the cluster stops reporting at all.
-- Public hostnames are probed both from inside the cluster and through the public path, so a dead tunnel is detectable.
+- Cluster hostnames are probed from inside the cluster, and Pangolin's public edge is probed directly, so a broken public path is detectable. Tunnel liveness specifically is not yet covered — see "The gap in-cluster probing cannot cover".
 
 ## Non-goals
 
@@ -169,7 +169,17 @@ Two facts compound:
 
 Result: the tunnel can be down indefinitely while every probe stays green.
 
-**Mitigation:** one additional probe targeting Pangolin's **public IP directly**, with `tls_config.server_name` and a `Host` header set to the real hostname, forcing traffic through the external path. That probe failing while the internal one passes is a precise "the tunnel is down" signal.
+**Mitigation:** one additional probe targeting Pangolin's **public IP directly** (`130.110.2.46`), with `tls_config.server_name` and a `Host` header set to the real hostname, forcing traffic through the external path.
+
+**Corrected 2026-09-01, against the live deployment.** The original text above assumed more than the deployment supports, on two counts:
+
+1. **`photos.koutoulastha.dev` is not published through Pangolin.** Only `traefik.koutoulastha.dev` is — it CNAMEs to `fe2gzbg07fa95w9.cname.pangolin-ns.net` → `130.110.2.46`. `photos.`, `argocd.` and `grafana.` have no public record at all, so the public-path probe must use `traefik.koutoulastha.dev` for both SNI and `Host`.
+
+2. **Pangolin authenticates before it proxies**, so the 502-on-dead-tunnel signal is unreachable to an unauthenticated prober. A cold request to the edge returns `302` to `https://app.pangolin.net/auth/resource/<id>?redirect=…`, served by Pangolin itself without ever consulting the Newt tunnel. Following that redirect (the module's `follow_redirects: true`) lands on Pangolin's auth service, which returns `200` regardless of cluster health — a **false green**, and exactly the failure the probe exists to prevent.
+
+**Therefore the public-path probe is scoped to the edge**, not the tunnel: `follow_redirects: false`, `valid_status_codes: [302]`. It proves public DNS, Pangolin's edge, and TLS-certificate validity on the public path — all real failure modes, none of them covered by the in-cluster probes. It does **not** prove the Newt tunnel is up.
+
+**The tunnel-liveness gap therefore remains open**, and is revisited in Task 8: if Grafana's Pangolin resource is left unauthenticated (relying on Grafana's own login), a probe of it traverses the tunnel and yields the 502 signal. Closing it otherwise requires one unauthenticated Pangolin resource pointed at a trivial origin endpoint such as Traefik's `/ping`.
 
 ## Exposure
 
@@ -211,7 +221,7 @@ Order matters; several steps fail confusingly if taken early.
 2. **Verify before configuring anything.** node-exporter pod count must equal node count — a missed `managedNamespaceMetadata` shows up here as desired > 0 / current 0 with no events. Then prune red targets until the target page is clean; the control-plane and kube-proxy monitors must be disabled before any of it is trustworthy.
 3. **Alertmanager wiring, tested deliberately.** Seal the ntfy and healthchecks secrets. Fire a synthetic alert with `amtool` rather than waiting for a real one — an untested alert path is indistinguishable from a working one until it matters. Confirm the phone receives it and healthchecks.io shows Watchdog pings.
 4. **Flip the existing ServiceMonitors** — Traefik, CNPG operator, Immich `Cluster` — one at a time, each confirmed green.
-5. **Blackbox + probes**, including the public-path probe. Confirm the tunnel probe green now, so it can be trusted red later.
+5. **Blackbox + probes**, including the public-edge probe. Confirm it green now, so it can be trusted red later.
 6. **Curated `PrometheusRule`**, added last, so your rules' noise is distinguishable from the defaults'.
 7. **Grafana exposure** — HTTPRoute, then Pangolin resource. Change the admin password on first login.
 
@@ -229,7 +239,7 @@ Recorded so they are recognizable rather than mysterious:
 | First sync fails on CRD apply | Missing `ServerSideApply=true` |
 | Permanently red control-plane targets, recurring `TargetDown` | Talos binds those metrics endpoints to `127.0.0.1` |
 | Metrics stop, no alert fires | Prometheus PVC full; TSDB refusing writes. Prevented by `retentionSize` |
-| All probes green while the site is unreachable externally | In-cluster probe bypassing Pangolin via split-horizon DNS. Prevented by the public-IP probe |
+| All probes green while the site is unreachable externally | In-cluster probe bypassing Pangolin via split-horizon DNS. Partly prevented by the public-edge probe, which covers public DNS, the edge and its TLS cert. A dead Newt tunnel is still not covered — Pangolin auths before proxying, so an unauthenticated probe never reaches the tunnel. Open; revisited in Task 8 |
 | Silence where alerts were expected | Alert path itself broken. Detected only by the healthchecks.io dead man's switch |
 
 ## Phase 2 (separate spec)

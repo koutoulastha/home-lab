@@ -850,15 +850,32 @@ Expected: a non-zero count for each. A zero means the rule written against it in
 - Consumes: the `Probe` CRD and open `probeSelector` from Task 1; the `monitoring` namespace from Task 3.
 - Produces: Service `blackbox-exporter:9115` in `monitoring`; metric `probe_success` labelled `instance` per target, and `probe_ssl_earliest_cert_expiry` — both consumed by Task 7.
 
-- [ ] **Step 1: Find Pangolin's public IP**
+- [ ] **Step 1: Pangolin's public IP — already resolved, 2026-09-01**
 
-The tunnel probe needs the address the outside world reaches, which is Pangolin's edge, not your WAN IP.
+**Do not re-derive this from `photos.koutoulastha.dev`; that host has no public record.** The original plan assumed it did. Verified against public DNS:
 
-```bash
-dig +short photos.koutoulastha.dev @1.1.1.1
+```
+traefik.koutoulastha.dev  →  fe2gzbg07fa95w9.cname.pangolin-ns.net  →  130.110.2.46
+photos. / argocd. / grafana.  →  no public record
 ```
 
-Expected: a single public IPv4. Use a **public** resolver — the LAN resolver is authoritative for this split-horizon zone and returns the private address. Record this value; it is substituted in Step 4.
+So **`PANGOLIN_PUBLIC_IP` = `130.110.2.46`**, and the only hostname that traverses Pangolin — hence the only valid SNI and `Host` value — is **`traefik.koutoulastha.dev`**.
+
+Live response from that edge, confirming it is up and the probe has a known-good baseline:
+
+```
+status:   302 Found
+location: https://app.pangolin.net/auth/resource/<id>?redirect=https://traefik.koutoulastha.dev/
+cert:     CN=traefik.koutoulastha.dev, notAfter Sep 16 2026
+```
+
+**The 302 is the expected success condition, and the module below must not follow it.** Pangolin authenticates before proxying to the origin, so that redirect is served by Pangolin itself without consulting the Newt tunnel. Following it reaches Pangolin's auth service, which returns `200` whether or not the cluster is reachable — a false green. See the spec's "The gap in-cluster probing cannot cover" for why this scopes the probe to the edge rather than the tunnel.
+
+If you ever need to re-derive the IP, use a **public** resolver — the LAN resolver is authoritative for this split-horizon zone and returns the private address:
+
+```bash
+dig +short traefik.koutoulastha.dev @1.1.1.1
+```
 
 - [ ] **Step 2: Branch and write the check, and watch it fail**
 
@@ -906,30 +923,39 @@ config:
         preferred_ip_protocol: ip4
 
     # Probes the PUBLIC path by connecting straight to Pangolin's edge IP.
-    # Two facts make this necessary: split-horizon DNS sends the in-cluster
-    # probe to the private address, and a dead Newt tunnel presents as a 502
-    # served by Pangolin's own edge — which a probe that bypassed that edge
-    # never sees. Without this, the tunnel can be down for a week with every
-    # other probe green.
+    # Necessary because split-horizon DNS sends every in-cluster probe to the
+    # private address, so nothing else here tests public DNS, the edge, or the
+    # public-facing TLS certificate.
     #
     # Connecting by IP means SNI and Host must both be forced to the real
     # hostname, or TLS fails on a name mismatch before HTTP is reached.
+    # traefik.koutoulastha.dev is the ONLY host published through Pangolin.
+    #
+    # follow_redirects MUST stay false and 302 MUST be the success code.
+    # Pangolin auths before proxying: a cold request is answered 302 to
+    # app.pangolin.net by the edge itself, without consulting the Newt tunnel.
+    # Following that redirect reaches Pangolin's auth service, which returns
+    # 200 even when this cluster is entirely unreachable — a false green.
+    #
+    # SCOPE: this proves public DNS + Pangolin's edge + cert validity.
+    # It does NOT prove the Newt tunnel is up. That gap is revisited in Task 8.
     http_2xx_pangolin:
       prober: http
       timeout: 10s
       http:
         valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
-        follow_redirects: true
+        valid_status_codes: [302]
+        follow_redirects: false
         preferred_ip_protocol: ip4
         headers:
-          Host: photos.koutoulastha.dev
+          Host: traefik.koutoulastha.dev
         tls_config:
-          server_name: photos.koutoulastha.dev
+          server_name: traefik.koutoulastha.dev
 ```
 
 - [ ] **Step 4: Write `infrastructure/monitoring/blackbox-exporter/probes.yaml`**
 
-Substitute the IP from Step 1 for `PANGOLIN_PUBLIC_IP`.
+The Pangolin IP is already substituted below (`130.110.2.46`, from Step 1). Copy it verbatim — no placeholder remains. The `public-hosts-internal` targets are LAN-resolved by design: `photos.`, `argocd.` and `traefik.` resolve to the private address from inside the cluster, which is what that probe is meant to test.
 
 ```yaml
 ---
@@ -965,8 +991,10 @@ spec:
     staticConfig:
       static:
         # Pangolin's public edge, by IP. This probe failing while
-        # public-hosts-internal passes is a precise "the tunnel is down" signal.
-        - https://PANGOLIN_PUBLIC_IP/
+        # public-hosts-internal passes means the public path is broken:
+        # public DNS, the edge itself, or its TLS certificate. A dead Newt
+        # tunnel is NOT covered — see the module comment in values.yaml.
+        - https://130.110.2.46/
       labels:
         path: pangolin-public
 ```
@@ -1067,7 +1095,9 @@ curl -sS --get 'http://localhost:9090/api/v1/query' \
 | jq -r '.data.result[] | "\(.metric.instance)\t\(.value[1])"'
 ```
 
-Expected: five rows. `photos.`, `argocd.` and `traefik.` report `1`; `grafana.` reports `0` until Task 8; the Pangolin IP target reports `1`.
+Expected: five rows. `photos.`, `argocd.` and `traefik.` report `1`; `grafana.` reports `0` until Task 8; `https://130.110.2.46/` reports `1`.
+
+A `0` on the Pangolin target with `probe_http_status_code` of `200` rather than `302` means `follow_redirects` was left true and the probe is measuring Pangolin's auth service instead of the edge — fix the module, not the target.
 
 **If the Pangolin target reports `0`,** check for a TLS name mismatch before assuming the tunnel is down:
 

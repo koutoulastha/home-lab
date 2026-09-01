@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: blackbox-exporter
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus-blackbox-exporter
+      targetRevision: 11.17.2
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/blackbox-exporter/values.yaml
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      ref: values
+      path: infrastructure/monitoring/blackbox-exporter
+      directory:
+        exclude: '{application.yaml,values.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Deliberately NO CreateNamespace=true and no managedNamespaceMetadata.
+      # The `monitoring` namespace is owned by the kube-prometheus-stack
+      # Application, which sets its PodSecurity labels. A second Application
+      # also managing that namespace would contend over its metadata. This
+      # Application therefore requires kube-prometheus-stack to be synced first,
+      # which the rollout order guarantees.
+      - ServerSideApply=true

@@ -1,0 +1,56 @@
+# prometheus-blackbox-exporter 11.17.2 (blackbox_exporter v0.28.0).
+#
+# Predictable Service name. Without this the chart derives
+# blackbox-exporter-prometheus-blackbox-exporter, which every Probe below
+# would have to spell out.
+fullnameOverride: blackbox-exporter
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+config:
+  modules:
+    # Standard in-cluster probe. Split-horizon DNS means these hostnames resolve
+    # to the private address from here, so this module tests Traefik directly.
+    http_2xx:
+      prober: http
+      timeout: 5s
+      http:
+        valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+        follow_redirects: true
+        preferred_ip_protocol: ip4
+
+    # Probes the PUBLIC path by connecting straight to Pangolin's edge IP.
+    # Necessary because split-horizon DNS sends every in-cluster probe to the
+    # private address, so nothing else here tests public DNS, the edge, or the
+    # public-facing TLS certificate.
+    #
+    # Connecting by IP means SNI and Host must both be forced to the real
+    # hostname, or TLS fails on a name mismatch before HTTP is reached.
+    # traefik.koutoulastha.dev is the ONLY host published through Pangolin;
+    # photos., argocd. and grafana. have no public DNS record at all.
+    #
+    # follow_redirects MUST stay false and 302 MUST be the success code.
+    # Pangolin auths before proxying: a cold request is answered 302 to
+    # app.pangolin.net by the edge itself, without consulting the Newt tunnel.
+    # Following that redirect reaches Pangolin's auth service, which returns
+    # 200 even when this cluster is entirely unreachable — a false green.
+    #
+    # SCOPE: this proves public DNS + Pangolin's edge + cert validity.
+    # It does NOT prove the Newt tunnel is up. That gap is revisited in Task 8.
+    http_2xx_pangolin:
+      prober: http
+      timeout: 10s
+      http:
+        valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+        valid_status_codes: [302]
+        follow_redirects: false
+        preferred_ip_protocol: ip4
+        headers:
+          Host: traefik.koutoulastha.dev
+        tls_config:
+          server_name: traefik.koutoulastha.dev
