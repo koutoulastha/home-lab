@@ -975,7 +975,13 @@ spec:
         - https://photos.koutoulastha.dev
         - https://grafana.koutoulastha.dev
         - https://argocd.koutoulastha.dev
-        - https://traefik.koutoulastha.dev
+        # /ping, not /. Corrected 2026-09-01 after the first rollout returned
+        # 404 for this target. The dashboard HTTPRoute sends every path to
+        # traefik-internal:8080, but Traefik serves nothing at / and answers
+        # 404 there — so probing / reports the route broken while it is fine.
+        # /ping is Traefik's own health endpoint (--ping=true is already set,
+        # its liveness probe uses it) and returns a bare 200.
+        - https://traefik.koutoulastha.dev/ping
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
@@ -1095,7 +1101,9 @@ curl -sS --get 'http://localhost:9090/api/v1/query' \
 | jq -r '.data.result[] | "\(.metric.instance)\t\(.value[1])"'
 ```
 
-Expected: five rows. `photos.`, `argocd.` and `traefik.` report `1`; `grafana.` reports `0` until Task 8; `https://130.110.2.46/` reports `1`.
+Expected: five rows. `photos.`, `argocd.` and `traefik.../ping` report `1`; `grafana.` reports `0` until Task 8; `https://130.110.2.46/` reports `1` with `probe_http_status_code` of `302`.
+
+**First-rollout results, 2026-09-01** — Pangolin `1` (status `302`, cert 15d), photos `1`, argocd `1`, grafana `0` (expected), traefik `0` with status `404`. That 404 was a defect in this plan, not in the cluster: the target was `/`, which Traefik does not serve. Corrected to `/ping` in Step 4.
 
 A `0` on the Pangolin target with `probe_http_status_code` of `200` rather than `302` means `follow_redirects` was left true and the probe is measuring Pangolin's auth service instead of the edge — fix the module, not the target.
 

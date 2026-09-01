@@ -18,7 +18,12 @@ spec:
         - https://photos.koutoulastha.dev
         - https://grafana.koutoulastha.dev
         - https://argocd.koutoulastha.dev
-        - https://traefik.koutoulastha.dev
+        # /ping, not /. The dashboard HTTPRoute sends every path to
+        # traefik-internal:8080, but Traefik serves nothing at / and answers
+        # 404 there — so probing / reports the route broken while it is fine.
+        # /ping is Traefik's own health endpoint (--ping=true is already set,
+        # its liveness probe uses it) and returns a bare 200.
+        - https://traefik.koutoulastha.dev/ping
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
