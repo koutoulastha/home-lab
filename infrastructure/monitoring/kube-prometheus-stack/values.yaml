@@ -170,6 +170,18 @@ grafana:
     enabled: true
     size: 5Gi
     accessModes: ["ReadWriteOnce"]
+  # Recreate, not the chart's default RollingUpdate. The PVC above is RWO on
+  # truenas-iscsi, so it can be attached to exactly one node at a time. Under
+  # RollingUpdate the new pod is scheduled before the old one is terminated; if
+  # it lands on a different node it waits forever for a volume the old pod will
+  # not release until the new one is Ready. That deadlock is silent — the
+  # Deployment still reports 1/1 because the old pod keeps serving, and the pod
+  # events expire within the hour, so nothing points at it afterwards.
+  # Observed 2026-09-01: a pod sat in Init:0/1 for six hours this way.
+  # Recreate trades a few seconds of downtime per upgrade for a rollout that
+  # completes.
+  deploymentStrategy:
+    type: Recreate
   # This login page is internet-facing via Pangolin. Signup off, anonymous off,
   # secure cookies on, and root_url set to the public hostname so generated
   # links and redirects do not point at an in-cluster address.
