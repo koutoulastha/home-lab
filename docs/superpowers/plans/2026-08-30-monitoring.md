@@ -1471,7 +1471,22 @@ curl -sS --get 'http://localhost:9090/api/v1/query' \
 
 Expected: `1`.
 
-The `BlackboxProbeFailed` alert firing since Task 7 now resolves, so the phone should receive a **resolved** notification. That confirms `send_resolved` works — the last untested part of the alert path.
+**Revised 2026-09-01.** This step originally expected `BlackboxProbeFailed` to have been firing for Grafana since Task 7 and to resolve here, giving a free test of `send_resolved`. Task 7 as built excludes `grafana.koutoulastha.dev` from that rule precisely so it would *not* page continuously, so no such firing exists and `send_resolved` stays untested by this route.
+
+Test it explicitly instead. Fire a synthetic alert with a short `--end`, then wait for it to lapse:
+
+```bash
+kubectl -n monitoring exec -it alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- \
+  amtool alert add SyntheticResolveTest \
+    severity=critical \
+    --annotation='description="synthetic resolve test — expect a resolved notification ~2 min later"' \
+    --end="$(date -u -d '+2 minutes' +%Y-%m-%dT%H:%M:%S.000Z)" \
+    --alertmanager.url=http://localhost:9093
+```
+
+Expected: a firing notification, then a **resolved** notification roughly two minutes later. Both must arrive. `send_resolved: true` is set on the critical and warning receivers but not on the dead man's switch, which is correct — a resolve there would ping healthchecks.io on recovery and muddy its signal.
+
+Note the quoting: `--annotation='description="..."'` with the inner quotes preserved. Writing `--annotation=description="..."` lets the shell strip them, and amtool then falls back to a legacy parser with a warning.
 
 - [ ] **Step 12: Update the repo README**
 

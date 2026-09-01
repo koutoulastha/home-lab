@@ -67,14 +67,11 @@ spec:
               PVC {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} is
               projected to be full within 24 hours at the current rate.
 
-        # The grafana. exclusion is TEMPORARY. That hostname has no HTTPRoute
-        # until Task 8, so its probe sits at 0 and this rule would page
-        # continuously from the moment it is deployed — training you to ignore
-        # every later firing of it, which is the one failure a curated alert set
-        # must not have.
-        # DELETE THE MATCHER IN TASK 8, once grafana.koutoulastha.dev serves.
+        # The temporary grafana.koutoulastha.dev exclusion was removed in Task 8,
+        # once that hostname got its HTTPRoute and its probe went green. Every
+        # probed target is now genuinely covered.
         - alert: BlackboxProbeFailed
-          expr: probe_success{instance!="https://grafana.koutoulastha.dev"} == 0
+          expr: probe_success == 0
           for: 5m
           labels:
             severity: critical
