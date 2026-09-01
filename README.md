@@ -30,6 +30,9 @@ infrastructure/
   cert-manager/           # + ClusterIssuer (Cloudflare DNS-01)
   database/
     cloudnative-pg/       # Postgres operator — see apps/immich/db
+  monitoring/
+    kube-prometheus-stack/  # Prometheus + Alertmanager + Grafana + exporters
+    blackbox-exporter/      # uptime probes, incl. the Pangolin public-edge probe
   networking/
     cilium/               # CNI, L2 announcements, LB IP pool
     traefik/              # ingress via Gateway API
