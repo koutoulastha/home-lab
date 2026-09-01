@@ -31,8 +31,9 @@ config:
     #
     # Connecting by IP means SNI and Host must both be forced to the real
     # hostname, or TLS fails on a name mismatch before HTTP is reached.
-    # traefik.koutoulastha.dev is the ONLY host published through Pangolin;
-    # photos., argocd. and grafana. have no public DNS record at all.
+    # traefik. and grafana. are the hosts published through Pangolin; photos.
+    # and argocd. have no public DNS record at all. traefik. is the one used
+    # here because its edge yields a deterministic unauthenticated 302.
     #
     # follow_redirects MUST stay false and 302 MUST be the success code.
     # Pangolin auths before proxying: a cold request is answered 302 to

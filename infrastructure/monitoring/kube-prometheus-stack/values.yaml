@@ -27,6 +27,14 @@ kubeProxy:
 # inert; it is unreachable *targets* that generate noise, and those are off above.
 defaultRules:
   create: true
+  disabled:
+    # Superseded by the curated PersistentVolumeFillingUp / ...FillingUpFast in
+    # alertrules.yaml, which use the same conditions with tuned thresholds and
+    # actionable annotations. Left enabled, both sets fire for one filling PVC:
+    # the alertnames differ, so neither the severity inhibit_rule (equal:
+    # [alertname, namespace]) nor group_by dedupes them, and the two land on
+    # different receivers — one phone notification each.
+    KubePersistentVolumeFillingUp: true
 
 prometheus:
   prometheusSpec:
@@ -118,10 +126,26 @@ alertmanager:
           group_wait: 0s
           group_interval: 5m
           repeat_interval: 5m
+        # InfoInhibitor exists only as an inhibition source; it is never
+        # actionable. It carries `severity: none`, so it matches neither the
+        # critical route below nor any severity matcher, and falls through to
+        # the root receiver — i.e. straight to the phone. Upstream routes it to
+        # a null receiver and additionally inhibits it with a source-less rule;
+        # both were lost when this config replaced the chart default wholesale.
+        - receiver: 'null'
+          matchers: ['alertname = "InfoInhibitor"']
+        # Upstream's root receiver is 'null', so info-level alerts never notify.
+        # Ours is ntfy-warning, which would notify on every one of them. Restore
+        # the upstream behaviour explicitly: info is for the UI, not the phone.
+        - receiver: 'null'
+          matchers: ['severity = "info"']
         - receiver: ntfy-critical
           matchers: ['severity = "critical"']
 
     receivers:
+      # Terminal sink. Alertmanager requires a receiver to exist before a route
+      # may reference it; this one deliberately has no notifier.
+      - name: 'null'
       - name: ntfy-warning
         webhook_configs:
           - url_file: /etc/alertmanager/secrets/alertmanager-endpoints/ntfy-warning-url
@@ -160,6 +184,14 @@ grafana:
     security:
       cookie_secure: true
       cookie_samesite: lax
+      # Gravatar makes an outbound request keyed on a hash of the user's email
+      # on every page render. Off by default here because this instance faces
+      # the internet.
+      disable_gravatar: true
+    snapshots:
+      # Grafana otherwise offers "publish snapshot" to a third-party host, which
+      # sends dashboard data off-network with a single click.
+      external_enabled: false
 
 nodeExporter:
   enabled: true
