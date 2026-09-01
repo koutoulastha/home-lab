@@ -8,7 +8,7 @@ spec:
   interval: 60s
   module: http_2xx
   prober:
-    url: blackbox-exporter:9115
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
   targets:
     staticConfig:
       # LAN-resolved by design. Split-horizon DNS returns the private address
@@ -34,7 +34,7 @@ spec:
   interval: 60s
   module: http_2xx_pangolin
   prober:
-    url: blackbox-exporter:9115
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
   targets:
     staticConfig:
       static:

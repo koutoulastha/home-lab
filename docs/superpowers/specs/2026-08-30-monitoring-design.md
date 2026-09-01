@@ -240,6 +240,7 @@ Recorded so they are recognizable rather than mysterious:
 | Permanently red control-plane targets, recurring `TargetDown` | Talos binds those metrics endpoints to `127.0.0.1` |
 | Metrics stop, no alert fires | Prometheus PVC full; TSDB refusing writes. Prevented by `retentionSize` |
 | All probes green while the site is unreachable externally | In-cluster probe bypassing Pangolin via split-horizon DNS. Partly prevented by the public-edge probe, which covers public DNS, the edge and its TLS cert. A dead Newt tunnel is still not covered — Pangolin auths before proxying, so an unauthenticated probe never reaches the tunnel. Open; revisited in Task 8 |
+| Grafana upgrades deadlock silently | `persistence.enabled` on an RWO `truenas-iscsi` PVC plus the chart's default `RollingUpdate`: the new pod is scheduled before the old is terminated and waits forever for a volume the old will not release. The Deployment still reports 1/1 because the old pod keeps serving, and pod events expire within the hour, so nothing points at it later. Hit on 2026-09-01 — a pod sat in `Init:0/1` for six hours and was found only by `KubeDeploymentRolloutStuck`. Prevented by `deploymentStrategy: {type: Recreate}`. `apps/immich/` already documented this exact failure mode; it was not carried over to monitoring |
 | Silence where alerts were expected | Alert path itself broken. Detected only by the healthchecks.io dead man's switch |
 
 ## Phase 2 (separate spec)

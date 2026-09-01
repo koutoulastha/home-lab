@@ -27,6 +27,14 @@ kubeProxy:
 # inert; it is unreachable *targets* that generate noise, and those are off above.
 defaultRules:
   create: true
+  disabled:
+    # Superseded by the curated PersistentVolumeFillingUp / ...FillingUpFast in
+    # alertrules.yaml, which use the same conditions with tuned thresholds and
+    # actionable annotations. Left enabled, both sets fire for one filling PVC:
+    # the alertnames differ, so neither the severity inhibit_rule (equal:
+    # [alertname, namespace]) nor group_by dedupes them, and the two land on
+    # different receivers — one phone notification each.
+    KubePersistentVolumeFillingUp: true
 
 prometheus:
   prometheusSpec:
@@ -118,10 +126,26 @@ alertmanager:
           group_wait: 0s
           group_interval: 5m
           repeat_interval: 5m
+        # InfoInhibitor exists only as an inhibition source; it is never
+        # actionable. It carries `severity: none`, so it matches neither the
+        # critical route below nor any severity matcher, and falls through to
+        # the root receiver — i.e. straight to the phone. Upstream routes it to
+        # a null receiver and additionally inhibits it with a source-less rule;
+        # both were lost when this config replaced the chart default wholesale.
+        - receiver: 'null'
+          matchers: ['alertname = "InfoInhibitor"']
+        # Upstream's root receiver is 'null', so info-level alerts never notify.
+        # Ours is ntfy-warning, which would notify on every one of them. Restore
+        # the upstream behaviour explicitly: info is for the UI, not the phone.
+        - receiver: 'null'
+          matchers: ['severity = "info"']
         - receiver: ntfy-critical
           matchers: ['severity = "critical"']
 
     receivers:
+      # Terminal sink. Alertmanager requires a receiver to exist before a route
+      # may reference it; this one deliberately has no notifier.
+      - name: 'null'
       - name: ntfy-warning
         webhook_configs:
           - url_file: /etc/alertmanager/secrets/alertmanager-endpoints/ntfy-warning-url
@@ -146,6 +170,18 @@ grafana:
     enabled: true
     size: 5Gi
     accessModes: ["ReadWriteOnce"]
+  # Recreate, not the chart's default RollingUpdate. The PVC above is RWO on
+  # truenas-iscsi, so it can be attached to exactly one node at a time. Under
+  # RollingUpdate the new pod is scheduled before the old one is terminated; if
+  # it lands on a different node it waits forever for a volume the old pod will
+  # not release until the new one is Ready. That deadlock is silent — the
+  # Deployment still reports 1/1 because the old pod keeps serving, and the pod
+  # events expire within the hour, so nothing points at it afterwards.
+  # Observed 2026-09-01: a pod sat in Init:0/1 for six hours this way.
+  # Recreate trades a few seconds of downtime per upgrade for a rollout that
+  # completes.
+  deploymentStrategy:
+    type: Recreate
   # This login page is internet-facing via Pangolin. Signup off, anonymous off,
   # secure cookies on, and root_url set to the public hostname so generated
   # links and redirects do not point at an in-cluster address.
@@ -160,6 +196,14 @@ grafana:
     security:
       cookie_secure: true
       cookie_samesite: lax
+      # Gravatar makes an outbound request keyed on a hash of the user's email
+      # on every page render. Off by default here because this instance faces
+      # the internet.
+      disable_gravatar: true
+    snapshots:
+      # Grafana otherwise offers "publish snapshot" to a third-party host, which
+      # sends dashboard data off-network with a single click.
+      external_enabled: false
 
 nodeExporter:
   enabled: true

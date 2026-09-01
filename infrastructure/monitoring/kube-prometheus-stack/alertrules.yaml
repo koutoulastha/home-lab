@@ -31,9 +31,16 @@ spec:
         # A backup that quietly stops running is worth more than most
         # infrastructure alerts. The schedule is daily at 02:30; 30h allows one
         # missed run plus slack before alerting.
+        # The `> 0` guard is load-bearing. CNPG does not omit this metric when no
+        # backup has ever succeeded — it explicitly publishes 0 (see
+        # pkg/management/postgres/webserver/metricserver/pg_collector.go). Without
+        # the guard, `time() - 0 > 108000` is always true, so a freshly created or
+        # restored cluster pages critical forever, and does so in exactly the state
+        # this alert is supposed to make visible.
         - alert: PostgresBackupStale
           expr: |
             time() - cnpg_collector_last_available_backup_timestamp > 108000
+              and cnpg_collector_last_available_backup_timestamp > 0
           for: 30m
           labels:
             severity: critical
@@ -56,9 +63,15 @@ spec:
         # Trend-based: catches the Immich library growing into its volume before
         # the static threshold would, and catches sudden growth the 85% rule
         # would only report once it is already too late to act calmly.
+        # The <15% guard matches upstream's own pairing. predict_linear alone
+        # pages critical on any large, mostly-empty volume that sustains a heavy
+        # write burst for an hour — a restore or a bulk import — while the volume
+        # is still 80% free and in no danger.
         - alert: PersistentVolumeFillingUpFast
           expr: |
             predict_linear(kubelet_volume_stats_available_bytes[6h], 24 * 3600) < 0
+              and
+            kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes < 0.15
           for: 1h
           labels:
             severity: critical
