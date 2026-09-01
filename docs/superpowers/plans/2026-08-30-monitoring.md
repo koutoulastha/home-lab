@@ -1159,6 +1159,12 @@ spec:
         # The repo's ACME/Pangolin CNAME history makes a silent renewal failure
         # a realistic outage. Without this it is discovered from a browser
         # warning, after the fact.
+        #
+        # Deliberately certmanager_* and not probe_ssl_earliest_cert_expiry:
+        # the blackbox probes also see Pangolin's edge certificate, which is
+        # Pangolin's to renew, not ours. Alerting on it would page about
+        # something unactionable. (At time of writing ours reads 84 days and
+        # Pangolin's 15.)
         - alert: CertificateExpiringSoon
           expr: |
             (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 14
@@ -1210,17 +1216,26 @@ spec:
               PVC {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} is
               projected to be full within 24 hours at the current rate.
 
+        # The grafana. exclusion is TEMPORARY. That hostname has no HTTPRoute
+        # until Task 8, so its probe sits at 0 and this rule would page
+        # continuously from the moment it is deployed — training you to ignore
+        # every later firing of it, which is the one failure a curated alert set
+        # must not have.
+        # DELETE THE MATCHER IN TASK 8, once grafana.koutoulastha.dev serves.
         - alert: BlackboxProbeFailed
-          expr: probe_success == 0
+          expr: probe_success{instance!="https://grafana.koutoulastha.dev"} == 0
           for: 5m
           labels:
             severity: critical
           annotations:
             description: >-
-              Probe of {{ $labels.instance }} has been failing for 5 minutes. If
-              only the pangolin-public target is down, the Newt tunnel is dead
-              (check UDP 51820); if only the internal targets are down, Traefik
-              or the backing service is.
+              Probe of {{ $labels.instance }} has been failing for 5 minutes.
+              The 130.110.2.46 target is Pangolin's public EDGE: it failing means
+              public DNS, the edge itself, or its TLS certificate — it does NOT
+              mean the Newt tunnel is down, and conversely a dead tunnel will not
+              trip it, because Pangolin authenticates before proxying so no
+              unauthenticated probe ever reaches the tunnel. An internal target
+              failing means Traefik or the backing service.
 
         # A TrueNAS-side storage problem presents as pods stuck in
         # ContainerCreating rather than as anything the default rules catch.
