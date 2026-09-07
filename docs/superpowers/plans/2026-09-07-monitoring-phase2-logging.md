@@ -183,6 +183,27 @@ singleBinary:
       cpu: 100m
       memory: 512Mi
     limits:
+
+# Zero out the replica counts of the other deployment modes. This is NOT
+# optional and NOT tidiness: the chart defaults backend/read/write to 3
+# replicas each, deploymentMode: SingleBinary does not zero them, and
+# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
+# a ComparisonError and the Application never syncs. The chart's own
+# single-binary-values.yaml carries the same block.
+#
+# Only these three default non-zero. Every distributed target (ingester,
+# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
+# queryScheduler) already defaults to 0 and is deliberately not listed.
+#
+# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
+# target, which is a different thing from `loki.compactor` above --- that one
+# carries retention_enabled and must not be touched.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
       memory: 2Gi
 
 # No Recreate strategy here, deliberately. This is a StatefulSet, not a
@@ -336,6 +357,9 @@ yq -e '.deploymentMode == "SingleBinary"
    and .singleBinary.persistence.size == "50Gi"
    and .singleBinary.persistence.enableStatefulSetAutoDeletePVC == false
    and .singleBinary.persistence.whenScaled == "Retain"
+   and .backend.replicas == 0
+   and .read.replicas == 0
+   and .write.replicas == 0
    and .chunksCache.enabled == false
    and .resultsCache.enabled == false
    and .gateway.enabled == false
@@ -500,6 +524,27 @@ alloy:
       cpu: 50m
       memory: 128Mi
     limits:
+
+# Zero out the replica counts of the other deployment modes. This is NOT
+# optional and NOT tidiness: the chart defaults backend/read/write to 3
+# replicas each, deploymentMode: SingleBinary does not zero them, and
+# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
+# a ComparisonError and the Application never syncs. The chart's own
+# single-binary-values.yaml carries the same block.
+#
+# Only these three default non-zero. Every distributed target (ingester,
+# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
+# queryScheduler) already defaults to 0 and is deliberately not listed.
+#
+# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
+# target, which is a different thing from `loki.compactor` above --- that one
+# carries retention_enabled and must not be touched.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
       memory: 512Mi
 
   configMap:
@@ -840,6 +885,27 @@ alloy:
       cpu: 25m
       memory: 128Mi
     limits:
+
+# Zero out the replica counts of the other deployment modes. This is NOT
+# optional and NOT tidiness: the chart defaults backend/read/write to 3
+# replicas each, deploymentMode: SingleBinary does not zero them, and
+# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
+# a ComparisonError and the Application never syncs. The chart's own
+# single-binary-values.yaml carries the same block.
+#
+# Only these three default non-zero. Every distributed target (ingester,
+# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
+# queryScheduler) already defaults to 0 and is deliberately not listed.
+#
+# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
+# target, which is a different thing from `loki.compactor` above --- that one
+# carries retention_enabled and must not be touched.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
       memory: 256Mi
 
   configMap:
@@ -1607,6 +1673,27 @@ alloy:
       cpu: 25m
       memory: 128Mi
     limits:
+
+# Zero out the replica counts of the other deployment modes. This is NOT
+# optional and NOT tidiness: the chart defaults backend/read/write to 3
+# replicas each, deploymentMode: SingleBinary does not zero them, and
+# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
+# a ComparisonError and the Application never syncs. The chart's own
+# single-binary-values.yaml carries the same block.
+#
+# Only these three default non-zero. Every distributed target (ingester,
+# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
+# queryScheduler) already defaults to 0 and is deliberately not listed.
+#
+# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
+# target, which is a different thing from `loki.compactor` above --- that one
+# carries retention_enabled and must not be touched.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
       memory: 256Mi
 
   configMap:
