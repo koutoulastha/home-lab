@@ -39,3 +39,24 @@ metrics:
       enabled: true
     serviceMonitor:
       enabled: true
+
+# Access logging, off by default in this chart. JSON rather than the default
+# common-log format because Alloy parses it into structured metadata; the
+# text format would have to be regex-matched and would lose fields.
+#
+# This is the highest-volume log stream in the cluster and dominates Loki's
+# 50Gi budget. Health and metrics endpoints are dropped on the Alloy side
+# rather than here, so that a request that 500s on /healthz is still visible
+# in Traefik's own debug output if it is ever needed.
+logs:
+  access:
+    enabled: true
+    format: json
+    fields:
+      headers:
+        defaultMode: drop
+        names:
+          # Deliberately minimal. Authorization and Cookie headers must never
+          # be logged: these lines are retained for 30 days and this is an
+          # internet-facing edge.
+          User-Agent: keep

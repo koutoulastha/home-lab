@@ -105,16 +105,61 @@ alloy:
       }
 
       loki.process "pod_logs" {
-        // The kubelet writes CRI format: "<time> <stream> <flags> <line>".
-        // Without this stage every log line arrives with that prefix glued on
-        // and the real timestamp is ignored in favour of ingestion time.
         stage.cri {}
 
-        // stage.cri puts `stream` (stdout/stderr) in the extracted map; promote
-        // it so stderr can be filtered on without a line-content match.
         stage.labels {
           values = {
             stream = "",
+          }
+        }
+
+        // Traefik access logs only. Everything else passes through untouched —
+        // a selector, not a filter, so no other workload's logs are affected.
+        stage.match {
+          selector = "{namespace=\"traefik\", app=\"traefik\"}"
+
+          // Drop health and metrics polling before it costs any storage. These
+          // are a constant, high-rate background that answers no question
+          // anyone asks 30 days later.
+          stage.drop {
+            expression = ".*\"RequestPath\":\"/(ping|healthz|metrics)\".*"
+          }
+
+          stage.json {
+            expressions = {
+              client_addr = "ClientAddr",
+              method      = "RequestMethod",
+              path        = "RequestPath",
+              status      = "DownstreamStatus",
+              router      = "RouterName",
+              duration    = "Duration",
+            }
+          }
+
+          // Bounded values become labels. `router` is bounded by the number of
+          // HTTPRoutes; status_class is three or four values.
+          stage.template {
+            source   = "status_class"
+            template = "{{ if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+          }
+          stage.labels {
+            values = {
+              status_class = "",
+              router       = "",
+            }
+          }
+
+          // Unbounded values become structured metadata: queryable, but never
+          // part of a stream key. Request path as a label would be unbounded
+          // cardinality, and client_addr nearly so.
+          stage.structured_metadata {
+            values = {
+              client_addr = "",
+              path        = "",
+              method      = "",
+              status      = "",
+              duration    = "",
+            }
           }
         }
 
