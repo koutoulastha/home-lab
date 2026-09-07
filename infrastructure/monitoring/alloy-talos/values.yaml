@@ -1,0 +1,117 @@
+# grafana/alloy 1.12.1 (Alloy v1.19.2). Talos node service and kernel logs.
+#
+# WHY THIS IS A SEPARATE APPLICATION FROM `alloy`:
+# otelcol.receiver.tcplog is an EXPERIMENTAL component, and Alloy gates
+# experimental components per instance — loading one requires setting
+# stabilityLevel below for the whole instance. Putting this receiver in the
+# pod-logs DaemonSet would lower the stability gate on the cluster's primary
+# log path just to collect node logs. Keeping it here also means the pod-logs
+# DaemonSet needs no hostNetwork at all, and that this whole experiment can be
+# deleted in one command.
+
+controller:
+  type: daemonset
+  # Each node ships to its own node's collector on loopback, so the pod must
+  # share the host's network namespace. This is the entire reason for the
+  # split: delivery then depends on no Service IP, no cluster DNS and no CNI —
+  # which matters because node logs are most valuable when those are broken.
+  hostNetwork: true
+  # Mandatory with hostNetwork. Without it the pod inherits the host resolver
+  # and cannot resolve loki.monitoring.svc, so it receives logs and silently
+  # fails to forward them.
+  dnsPolicy: ClusterFirstWithHostNet
+
+alloy:
+  # Required for otelcol.receiver.tcplog. Set on THIS instance only — never on
+  # the pod-logs `alloy` instance.
+  stabilityLevel: experimental
+
+  mounts:
+    varlog: false
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  configMap:
+    content: |
+      // ---------------------------------------------------------------------
+      // Talos service logs: machine.logging.destinations -> tcp://127.0.0.1:12345
+      // ---------------------------------------------------------------------
+      otelcol.receiver.tcplog "talos_service" {
+        listen_address = "127.0.0.1:12345"
+        output {
+          logs = [otelcol.processor.batch.talos.input]
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Talos kernel logs: KmsgLogConfig -> tcp://127.0.0.1:12346
+      // ---------------------------------------------------------------------
+      otelcol.receiver.tcplog "talos_kernel" {
+        listen_address = "127.0.0.1:12346"
+        output {
+          logs = [otelcol.processor.batch.talos.input]
+        }
+      }
+
+      otelcol.processor.batch "talos" {
+        output {
+          logs = [otelcol.exporter.loki.talos.input]
+        }
+      }
+
+      // Bridge from the OpenTelemetry pipeline into the same Loki write path
+      // every other source uses, so limits and retries stay configured in one
+      // place.
+      otelcol.exporter.loki "talos" {
+        forward_to = [loki.process.talos.receiver]
+      }
+
+      loki.process "talos" {
+        // Talos sends json_lines with msg, talos-level, talos-service and
+        // talos-time always present.
+        stage.json {
+          expressions = {
+            msg      = "msg",
+            level    = "\"talos-level\"",
+            service  = "\"talos-service\"",
+          }
+        }
+
+        // Bounded: a handful of Talos services, a handful of levels.
+        stage.labels {
+          values = {
+            level   = "",
+            service = "",
+          }
+        }
+
+        stage.static_labels {
+          values = {
+            job = "talos",
+          }
+        }
+
+        // Replace the OTLP envelope with the actual message.
+        stage.output {
+          source = "msg"
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+crds:
+  create: false
+
+serviceMonitor:
+  enabled: true
