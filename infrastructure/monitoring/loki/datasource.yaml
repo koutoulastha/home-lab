@@ -1,0 +1,26 @@
+# Picked up by the Grafana datasource sidecar that kube-prometheus-stack
+# already runs, which watches for this label. Shipping the datasource from
+# here rather than adding it to kube-prometheus-stack/values.yaml keeps this
+# Application self-contained: deleting it removes its datasource too, and the
+# Phase 1 values file is never touched.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-datasource
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  loki-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        isDefault: false
+        jsonData:
+          # Matches limits_config.retention_period. Grafana uses it to keep
+          # the time picker from offering ranges with no data behind them.
+          maxLines: 5000

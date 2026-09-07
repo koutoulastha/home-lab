@@ -1,0 +1,127 @@
+# grafana/loki 7.3.0 (Loki 3.6.11).
+#
+# The chart's defaults target a scaled-out cloud deployment: SimpleScalable
+# across nine pods, S3 storage, replication factor 3, multi-tenancy on, and
+# roughly 9GB of memcached. Nearly every block below exists to turn one of
+# those off. See docs/superpowers/specs/2026-09-07-monitoring-phase2-logging-design.md.
+
+deploymentMode: SingleBinary
+
+loki:
+  # Multi-tenancy off. Left on, every query and every push needs an
+  # X-Scope-OrgID header, including Grafana's and the ruler's.
+  auth_enabled: false
+
+  commonConfig:
+    # Chart default is 3. There is one replica and one PVC; asking for three
+    # copies of a single ingester makes writes fail, not redundant.
+    replication_factor: 1
+
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+
+  # The chart ships schemaConfig as {} and Loki does not start without it.
+  # tsdb + v13 is the current schema. `from` is the date this cluster first
+  # writes logs; it must never be moved backwards once data exists, and a
+  # future schema change is an additional list entry, never an edit of this one.
+  schemaConfig:
+    configs:
+      - from: "2026-09-07"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+  limits_config:
+    # 30 days. Correlates against the 90-day Prometheus for the recent window
+    # that actually gets investigated.
+    retention_period: 720h
+    # Required for the structured metadata that keeps client IPs and request
+    # paths queryable without making them stream labels.
+    allow_structured_metadata: true
+    # Chart defaults, restated so they are visible rather than inherited.
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+    volume_enabled: true
+
+  compactor:
+    working_directory: /var/loki/compactor
+    # Load-bearing. Without retention_enabled the retention_period above is
+    # silently inert: nothing is ever deleted, and the first symptom is a full
+    # PVC weeks later. There is no retentionSize backstop in Loki the way there
+    # is in Prometheus, so the alert in Task 5 is the only other guard.
+    retention_enabled: true
+    delete_request_store: filesystem
+
+  server:
+    http_listen_port: 3100
+    grpc_listen_port: 9095
+
+singleBinary:
+  # Chart default is 0, because the default deployment mode is SimpleScalable.
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 50Gi
+    accessModes: ["ReadWriteOnce"]
+    # storageClassName omitted on purpose: truenas-iscsi is the default class.
+    #
+    # The next three are a data-loss guard, not tidiness. The chart defaults to
+    # enableStatefulSetAutoDeletePVC: true with whenScaled/whenDeleted: Delete,
+    # so scaling this StatefulSet to zero — an ordinary troubleshooting move —
+    # destroys 30 days of logs.
+    enableStatefulSetAutoDeletePVC: false
+    whenScaled: Retain
+    whenDeleted: Retain
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+# No Recreate strategy here, deliberately. This is a StatefulSet, not a
+# Deployment: it terminates the old pod before creating its replacement under
+# the same identity and PVC, so the RWO rollout deadlock that trapped Grafana
+# for six hours on 2026-09-01 cannot occur. Do not copy the Grafana comment here.
+
+# --- Components this cluster does not need -----------------------------------
+
+# nginx in front of a single pod. The datasource and every Alloy instance reach
+# the Service directly.
+gateway:
+  enabled: false
+
+# The chart default allocates 8192MB for chunks and 1024MB for results — more
+# memory than Prometheus, Grafana and Alloy combined, to cache one person's
+# queries. Loki works without them; add back only if queries become slow.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Synthetic-log DaemonSet and a Helm test pod. Neither belongs in a
+# GitOps-managed namespace yet.
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+
+# Monitoring infrastructure that is not itself monitored is a blind spot, so
+# the ServiceMonitor is on. metricsInstance must be off: it emits Grafana Agent
+# Operator custom resources, and this cluster has no such CRDs — the sync fails
+# on a missing MetricsInstance kind.
+monitoring:
+  serviceMonitor:
+    enabled: true
+    metricsInstance:
+      enabled: false
+  selfMonitoring:
+    enabled: false
+  rules:
+    enabled: false
