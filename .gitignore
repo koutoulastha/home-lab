@@ -42,3 +42,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# subagent-driven-development scratch workspace
+.superpowers/
