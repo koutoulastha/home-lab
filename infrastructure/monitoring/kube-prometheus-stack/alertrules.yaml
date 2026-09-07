@@ -111,3 +111,25 @@ spec:
               Pod {{ $labels.namespace }}/{{ $labels.pod }} has been stuck in
               ContainerCreating for 15 minutes. Commonly an iSCSI or NFS mount
               failure — check the democratic-csi node pod on that node.
+
+        # Loki's only retention backstop. Unlike Prometheus, Loki has no
+        # retentionSize setting — retention is purely by time, so a volume
+        # spike fills the PVC well before 30 days elapse, and a full PVC
+        # stops ingestion exactly when something interesting is happening.
+        #
+        # This lives here, in a Prometheus rule, rather than in Loki's own
+        # ruler on purpose: asking Loki to alert on Loki running out of disk
+        # fails at the moment it is needed.
+        - alert: LokiStorageFillingUp
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{persistentvolumeclaim=~"storage-loki-.*"}
+              /
+              kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"storage-loki-.*"}
+            ) > 0.80
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Loki PVC is over 80% full"
+            description: "{{ $labels.persistentvolumeclaim }} is {{ $value | humanizePercentage }} full. Loki has no size-based retention: when this fills, ingestion stops."

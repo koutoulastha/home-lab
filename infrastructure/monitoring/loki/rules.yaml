@@ -1,0 +1,65 @@
+# LogQL alert rules, mounted into the ruler by the chart's rules sidecar.
+#
+# Deliberately small. Phase 1 closed by removing alerts that fired in healthy
+# states, so every rule here is restricted to something metrics genuinely
+# cannot see, and every one carries a `for:` so a single blip cannot page.
+#
+# The `severity` values must stay within {critical, warning}: Alertmanager's
+# Phase 1 routes match on exactly those, and a rule with any other severity
+# matches no route and is delivered nowhere, silently.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-alerting-rules
+  namespace: monitoring
+  labels:
+    loki_rule: "1"
+data:
+  phase2-log-alerts.yaml: |
+    groups:
+      - name: log-only-signals
+        interval: 1m
+        rules:
+          # Restart metrics say a pod restarted. Only the log says why — and
+          # only the log catches a process that logs a fatal error and then
+          # keeps running in a broken state without ever restarting.
+          - alert: ContainerFatalErrors
+            expr: |
+              sum by (namespace, app, container) (
+                count_over_time({namespace=~".+"} |~ "(?i)(panic:|fatal error|FATAL)"[5m])
+              ) > 5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.app }} logging fatal errors"
+              description: "{{ $labels.namespace }}/{{ $labels.app }} container {{ $labels.container }} logged more than 5 panic/fatal lines in 5 minutes."
+
+          # An internet-facing login page. Purely a log signal: Grafana emits
+          # no metric for failed authentication.
+          - alert: GrafanaAuthFailureBurst
+            expr: |
+              sum (
+                count_over_time({namespace="monitoring", app="grafana"} |~ "(?i)invalid username or password"[5m])
+              ) > 10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Burst of failed Grafana logins"
+              description: "More than 10 failed Grafana login attempts in 5 minutes on an internet-facing login page."
+
+          # Logging that silently stops looks exactly like a quiet cluster.
+          # kube-system always produces some traffic, so zero here means the
+          # pipeline is broken, not that nothing happened.
+          - alert: LogIngestionStopped
+            expr: |
+              sum (
+                count_over_time({namespace="kube-system"}[10m])
+              ) == 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Loki has received no logs from kube-system for 15 minutes"
+              description: "Alloy or Loki has stopped ingesting. Logs are not being collected and every other log alert here is now blind."
