@@ -1,0 +1,64 @@
+# grafana/alloy 1.12.1 (Alloy v1.19.2). Kubernetes Events only.
+#
+# WHY THIS IS A SEPARATE APPLICATION FROM `alloy`:
+# loki.source.kubernetes_events consumes a single cluster-wide API stream, not
+# a per-node one. In a DaemonSet, every node would collect every event and
+# Loki would receive one copy per node. A Helm release is one controller type,
+# so a singleton collector has to be its own release.
+#
+# DO NOT SCALE THIS ABOVE ONE REPLICA. It looks like harmless redundancy and
+# silently duplicates every event in the cluster.
+
+controller:
+  type: deployment
+  replicas: 1
+
+# Needs a ClusterRole to watch events across all namespaces. The chart creates
+# it; this is the default, restated because turning it off breaks collection
+# with a permissions error that is easy to misread as a config problem.
+rbac:
+  create: true
+
+alloy:
+  # No /var/log mount: this instance reads the API, not the disk. It therefore
+  # needs none of the host access the DaemonSet does.
+  mounts:
+    varlog: false
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  configMap:
+    content: |
+      // Cluster-wide Events. Empty namespaces list means all namespaces.
+      //
+      // Events live roughly an hour in etcd and then vanish. That is why this
+      // exists: the explanation for an eviction, a failed volume attach, or a
+      // stalled rollout is routinely already gone by the time anyone looks.
+      loki.source.kubernetes_events "cluster_events" {
+        job_name   = "kubernetes-events"
+        forward_to = [loki.process.events.receiver]
+      }
+
+      loki.process "events" {
+        // The source sets `namespace` already. Promote nothing else: event
+        // `reason` is tempting but unbounded across controllers, and belongs
+        // in the line where LogQL can still filter it.
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+crds:
+  create: false
+
+serviceMonitor:
+  enabled: true
