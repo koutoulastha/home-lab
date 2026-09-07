@@ -357,6 +357,9 @@ yq -e '.deploymentMode == "SingleBinary"
    and .singleBinary.persistence.size == "50Gi"
    and .singleBinary.persistence.enableStatefulSetAutoDeletePVC == false
    and .singleBinary.persistence.whenScaled == "Retain"
+   and .backend.replicas == 0
+   and .read.replicas == 0
+   and .write.replicas == 0
    and .chunksCache.enabled == false
    and .resultsCache.enabled == false
    and .gateway.enabled == false
