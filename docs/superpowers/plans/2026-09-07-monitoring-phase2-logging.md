@@ -994,7 +994,7 @@ Report: the replica count, and the total-vs-unique numbers from Step 10.
 
 **Interfaces:**
 - Consumes: the pod-log pipeline from Task 2 — access logs are Traefik's stdout, so they already arrive; this task only adds parsing.
-- Produces: the labels `status_class` and `router`, plus structured metadata `client_addr`, `path`, `method`, `duration_ms`.
+- Produces: the labels `status_class` and `router`, plus structured metadata `client_addr`, `path`, `method`, `status`, `duration` (Traefik's raw `Duration` field, not milliseconds).
 
 - [ ] **Step 1: Branch**
 
@@ -1107,9 +1107,13 @@ Replace the `loki.process "pod_logs"` block with the version below. The CRI and 
 
           // Bounded values become labels. `router` is bounded by the number of
           // HTTPRoutes; status_class is three or four values.
+          // atoi returns 0 when the value is missing or non-numeric, so the
+          // `< 100` branch must come first. Without it a status Traefik did
+          // not record falls through to the else and is labelled 2xx — a
+          // failed request silently counted as a success.
           stage.template {
             source   = "status_class"
-            template = "{{ if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+            template = "{{ if lt (atoi .status) 100 }}unknown{{ else if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
           }
           stage.labels {
             values = {
