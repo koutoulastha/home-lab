@@ -38,13 +38,13 @@ Recorded with rationale, because the reasoning is the part that decays:
 
 1. **Loki in SingleBinary mode on a filesystem PVC**, not SimpleScalable on object storage. The scaled-out topology is nine pods and an S3 backend to serve one person's queries over one cluster's logs. The PVC path reuses `truenas-iscsi`, already proven by Prometheus and Grafana. Cost accepted: one replica, and no size-based retention backstop (see Storage and retention).
 
-2. **Alloy, in two separate instances.** `loki.source.kubernetes_events` consumes a cluster-wide API stream, so running it in a DaemonSet produces one copy of every event per node. Events therefore need a singleton collector, and a Helm release is one controller type, so this is two Applications rather than one: `alloy` (DaemonSet) and `alloy-events` (Deployment, one replica).
+2. **Alloy, in three separate instances.** `loki.source.kubernetes_events` consumes a cluster-wide API stream, so running it in a DaemonSet produces one copy of every event per node; events need a singleton collector, and a Helm release is one controller type. The Talos receiver is separated for a different reason — it is an Experimental component and Alloy gates those per instance (see Talos node logs). So: `alloy` (DaemonSet, pod logs), `alloy-events` (Deployment, one replica), and `alloy-talos` (DaemonSet, hostNetwork, experimental, added last and droppable).
 
 3. **`grafana/k8s-monitoring` rejected.** It would generate the Alloy config for pod logs and events from feature flags, saving real work. It is also an umbrella for metrics *and* logs, and wants to deploy its own Alloy-based metrics scraping alongside `kube-prometheus-stack` in the same namespace. The config saved is spent turning that off, and every chart upgrade re-litigates it. Paying the "inherited upstream opinions" cost once for `kube-prometheus-stack` was a good trade; paying it twice in one namespace is not.
 
 4. **Pod logs tailed from `/var/log/pods`, not read through the API server.** `loki.source.kubernetes` reads logs via the Kubernetes API, which puts the entire cluster's log volume through the control plane and fails exactly when the API is unhealthy — the moment logs matter most. File tailing needs a hostPath mount, which the namespace already permits.
 
-5. **Talos node logs delivered to loopback.** The Alloy DaemonSet runs `hostNetwork: true` and listens on `127.0.0.1`; nodes ship to their own node's collector. Node log delivery then depends on no Service IP, no cluster DNS, and no CNI. Given that node logs are most valuable when cluster networking is broken, a delivery path that shares fate with cluster networking would be self-defeating.
+5. **Talos node logs delivered to loopback.** The `alloy-talos` DaemonSet runs `hostNetwork: true` and listens on `127.0.0.1`; nodes ship to their own node's collector. Node log delivery then depends on no Service IP, no cluster DNS, and no CNI. Given that node logs are most valuable when cluster networking is broken, a delivery path that shares fate with cluster networking would be self-defeating.
 
 6. **Datasource shipped as a sidecar-discovered ConfigMap**, not added to `kube-prometheus-stack/values.yaml`. Grafana already runs a sidecar watching for `grafana_datasource: "1"`. This keeps the Loki Application self-contained, leaves the Phase 1 values file untouched, and means deleting the Application also removes its datasource.
 
@@ -60,11 +60,14 @@ infrastructure/monitoring/
     datasource.yaml         # ConfigMap, label grafana_datasource: "1"
     rules.yaml              # ConfigMap, label loki_rule: LogQL alert rules
   alloy/
-    application.yaml        # grafana/alloy 1.12.1, DaemonSet, hostNetwork
-    values.yaml             # pod logs + Talos tcplog receivers
+    application.yaml        # grafana/alloy 1.12.1, DaemonSet, pod logs
+    values.yaml
   alloy-events/
     application.yaml        # grafana/alloy 1.12.1, Deployment replicas: 1
     values.yaml             # Kubernetes Events only
+  alloy-talos/              # task 6; droppable without affecting the above
+    application.yaml        # grafana/alloy 1.12.1, DaemonSet, hostNetwork
+    values.yaml             # Talos tcplog receivers, stabilityLevel experimental
 ```
 
 Pinned versions, verified against the Grafana chart repository on 2026-09-07:
@@ -81,18 +84,18 @@ Two files outside these directories change:
 
 ## Application shape
 
-All three Applications follow the `blackbox-exporter` precedent exactly:
+All four Applications follow the `blackbox-exporter` precedent exactly:
 
 - Multi-source: upstream chart, plus a git source with `ref: values` supplying both the values file and the plain manifests in the directory. `$values` paths are relative to the repo root, never to the source's `path`.
 - `directory.exclude: '{application.yaml,values.yaml}'` so the chart values and the Application itself are not also applied as manifests.
 - `ServerSideApply=true`.
-- Deliberately **no** `CreateNamespace=true` and **no** `managedNamespaceMetadata`. The `monitoring` namespace is owned by `kube-prometheus-stack`, which sets its PodSecurity labels; a second Application managing that namespace's metadata would contend over it. All three therefore require `kube-prometheus-stack` to be synced first, which the rollout order guarantees.
+- Deliberately **no** `CreateNamespace=true` and **no** `managedNamespaceMetadata`. The `monitoring` namespace is owned by `kube-prometheus-stack`, which sets its PodSecurity labels; a second Application managing that namespace's metadata would contend over it. All four therefore require `kube-prometheus-stack` to be synced first, which the rollout order guarantees.
 
 Each `application.yaml` needs a one-time manual `kubectl apply`. There is no app-of-apps in this repo; an Application that is committed but never applied deploys nothing and reports nothing.
 
 ## The thing that would have silently broken the first sync
 
-The Alloy DaemonSet mounts `/var/log` as hostPath and runs with `hostNetwork: true`. Under the cluster-wide `baseline` PodSecurity enforce level this is rejected **silently** — desired > 0, current 0, no pods, and no events explaining it. This is the identical failure that hit node-exporter and the CSI node DaemonSets.
+The `alloy` DaemonSet mounts `/var/log` as hostPath, and `alloy-talos` additionally runs with `hostNetwork: true`. Under the cluster-wide `baseline` PodSecurity enforce level both are rejected **silently** — desired > 0, current 0, no pods, and no events explaining it. This is the identical failure that hit node-exporter and the CSI node DaemonSets.
 
 It does not bite here, because `kube-prometheus-stack` already labels the `monitoring` namespace `pod-security.kubernetes.io/enforce: privileged` for node-exporter's benefit, and Alloy inherits it. This is recorded because the mitigation is invisible: nothing in the Alloy Application shows why it works, and anyone tightening that namespace label later will break log collection in a way that produces no error message.
 
@@ -136,15 +139,17 @@ The chart's PVC lifecycle defaults are a data-loss hazard and are overridden: `e
 
 This is the single decision most able to wreck a Loki install, so it is explicit rather than inherited. Every distinct combination of label values is a separate stream with its own chunks; one high-cardinality label multiplies streams until write throughput and query latency collapse.
 
-- **Stream labels** — low cardinality and bounded: `namespace`, `app`, `container`, `node`, `stream` (stdout/stderr), and `level` where available.
-- **Structured metadata** — queryable, not a stream key: `pod` name, request paths, trace IDs.
+- **Stream labels** — bounded: `namespace`, `app`, `container`, `node`, `pod`, `stream` (stdout/stderr), and `level` where available.
+- **Structured metadata** — parsed out of the line, queryable, never a stream key: client IP, request path, request method, duration, trace IDs.
 - **Left in the log line** — everything else.
 
 `app` is taken from the pod's owning controller name (the `app.kubernetes.io/name` label where present, falling back to the controller's name with any ReplicaSet hash suffix stripped) — never the raw pod name.
 
 `level` is promoted only for streams whose format actually yields one, such as Traefik's JSON access logs and Talos's `talos-level` field. Arbitrary container stdout is not parsed to manufacture one. A `level` label defaulted to `unknown` across most streams costs a label dimension and answers nothing.
 
-Pod name goes to structured metadata specifically because every restart mints a new one. As a stream label it grows without bound precisely in the crash-loop scenario you would be investigating.
+**`pod` is a stream label, not structured metadata.** An earlier draft of this spec put it in structured metadata on the reasoning that every restart mints a new pod name. Two things corrected that. First, the cardinality argument is weaker than it looks: `pod` is not orthogonal to the other labels — each pod belongs to exactly one namespace/app/container — so adding it does not multiply the stream count, it tracks the number of distinct pods over the retention window, which is bounded and small at this scale. Second, Alloy's `stage.structured_metadata` populates from the **extracted map** — values parsed out of the log line — and `pod` arrives as a discovery label, not an extracted value. Moving it would need a contrived pipeline to buy nothing.
+
+The labels that genuinely are unbounded — request path and client IP — come from parsing the line, so they land in the extracted map naturally and structured metadata is exactly the right home for them. That is where this rule earns its keep.
 
 The stream label names `namespace`, `pod` and `container` deliberately match what `kube-state-metrics` and the Phase 1 ServiceMonitors emit. That alignment is the correlation feature: it is what lets a Grafana split view put logs and metrics on one axis, and what lets a dashboard panel drill from a metric spike into the matching log stream. Divergent names for identical concepts would work and leave every correlation to be done by hand.
 
@@ -177,7 +182,15 @@ Talos exposes two separate remote log streams, both `json_lines` only:
 
 `KmsgLogConfig` is specified rather than the `talos.logging.kernel` kernel argument, because `extraKernelArgs` take effect only on a Talos upgrade, while the config document applies on a normal config apply.
 
-In-cluster, the Alloy DaemonSet receives both with `otelcol.receiver.tcplog` on loopback, then bridges into the same `loki.write` used by every other source so that limits and retries are configured in one place. Two ports, so the streams are distinguishable at the receiver rather than by inspecting payloads:
+In-cluster, these are received with `otelcol.receiver.tcplog` on loopback, bridged into the same `loki.write` endpoint every other source uses.
+
+**This runs as a fourth Application, `alloy-talos`, not in the pod-logs DaemonSet.** `otelcol.receiver.tcplog` is an **Experimental** component, and Alloy gates experimental components per instance: loading one requires setting `alloy.stabilityLevel: experimental` for the whole instance. Putting the Talos receiver in the pod-logs DaemonSet would therefore lower the stability gate on the cluster's primary log path in order to collect node logs. Isolating it means three things:
+
+- Pod log collection stays at the default `generally-available` stability.
+- The pod-logs DaemonSet needs **no `hostNetwork`** at all — loopback binding is only a Talos requirement — so its privilege surface shrinks to the `/var/log` hostPath mount.
+- Task 6 becomes genuinely droppable: deleting one Application removes the entire experiment with no effect on anything else.
+
+`alloy-talos` is itself a DaemonSet with `hostNetwork: true` and `dnsPolicy: ClusterFirstWithHostNet`, since each node must reach its own collector on loopback. Two ports, so the streams are distinguishable at the receiver rather than by inspecting payloads:
 
 | Stream | Node endpoint | Talos configuration |
 |---|---|---|
@@ -223,7 +236,7 @@ Six tasks, ordered so that each is independently verifiable and no later task ca
 | 3 | `alloy-events` singleton | Events queryable; a count confirms one copy per event, not one per node |
 | 4 | Traefik access logs | A request through the public edge appears with parsed status; health endpoints absent |
 | 5 | Ruler, rules ConfigMap, PVC alert | Rules listed by Loki's API, **and** one deliberately fired rule arrives on the phone |
-| 6 | Talos node logs | Service and kernel logs from every node queryable in Grafana |
+| 6 | `alloy-talos` Application + Omni machine config | Service and kernel logs from every node queryable in Grafana |
 
 ### Verification means querying, not looking at a dashboard
 
@@ -245,6 +258,7 @@ Task 5's requirement is deliberate. Phase 1 established that an Alertmanager con
 | Application permanently `OutOfSync` with no visible diff | `ServerSideApply=true` changes how ArgoCD diffs every resource in the Application; server-defaulted fields must be spelled out. Identical to the Grafana HTTPRoute drift fixed on 2026-09-01 |
 | Application committed but deploys nothing | Each `application.yaml` needs its one-time manual `kubectl apply`; there is no app-of-apps |
 | Talos kernel logs never arrive despite config | `extraKernelArgs` apply only on upgrade — use the `KmsgLogConfig` document instead |
+| `alloy-talos` fails to start, complaining about component stability | `otelcol.receiver.tcplog` is Experimental; the instance needs `alloy.stabilityLevel: experimental`. Set it on `alloy-talos` only — never on the pod-logs instance |
 
 ## Phase 3 (if ever)
 
