@@ -49,9 +49,18 @@ spec:
               No successful CNPG backup for cluster {{ $labels.pod }} in over 30
               hours. Check `kubectl -n immich get backups.postgresql.cnpg.io`.
 
+        # Loki's PVC is excluded here because LokiStorageFillingUp covers it at
+        # a lower threshold (80%) with an actionable message. Without the
+        # exclusion both fire above 85% at the same severity — two pages for
+        # one condition. PersistentVolumeFillingUpFast deliberately still
+        # covers Loki: it is predictive and critical, an escalation rather
+        # than a duplicate.
         - alert: PersistentVolumeFillingUp
           expr: |
-            kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85
+            kubelet_volume_stats_used_bytes{persistentvolumeclaim!~"storage-loki-.*"}
+            /
+            kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!~"storage-loki-.*"}
+            > 0.85
           for: 15m
           labels:
             severity: warning
