@@ -1647,6 +1647,13 @@ Expected: FAIL — `Error: ... no such file or directory`
 # log path just to collect node logs. Keeping it here also means the pod-logs
 # DaemonSet needs no hostNetwork at all, and that this whole experiment can be
 # deleted in one command.
+#
+# Ports are 12350/12351, deliberately NOT 12345/12346: the alloy chart's own
+# HTTP server defaults to listenPort 12345 on 0.0.0.0, and because this
+# instance runs hostNetwork that server shares a network namespace with these
+# receivers. Binding 12345 here races Alloy's own server for the port; the
+# readiness probe is on 12345 too, so the pod would report Ready while
+# silently dropping every Talos service log.
 
 controller:
   type: daemonset
@@ -1699,20 +1706,20 @@ write:
   configMap:
     content: |
       // ---------------------------------------------------------------------
-      // Talos service logs: machine.logging.destinations -> tcp://127.0.0.1:12345
+      // Talos service logs: machine.logging.destinations -> tcp://127.0.0.1:12350
       // ---------------------------------------------------------------------
       otelcol.receiver.tcplog "talos_service" {
-        listen_address = "127.0.0.1:12345"
+        listen_address = "127.0.0.1:12350"
         output {
           logs = [otelcol.processor.batch.talos.input]
         }
       }
 
       // ---------------------------------------------------------------------
-      // Talos kernel logs: KmsgLogConfig -> tcp://127.0.0.1:12346
+      // Talos kernel logs: KmsgLogConfig -> tcp://127.0.0.1:12351
       // ---------------------------------------------------------------------
       otelcol.receiver.tcplog "talos_kernel" {
-        listen_address = "127.0.0.1:12346"
+        listen_address = "127.0.0.1:12351"
         output {
           logs = [otelcol.processor.batch.talos.input]
         }
@@ -1819,8 +1826,8 @@ yq -e '.controller.type == "daemonset"
    and .controller.hostNetwork == true
    and .controller.dnsPolicy == "ClusterFirstWithHostNet"
    and .alloy.stabilityLevel == "experimental"
-   and (.alloy.configMap.content | contains("127.0.0.1:12345"))
-   and (.alloy.configMap.content | contains("127.0.0.1:12346"))' \
+   and (.alloy.configMap.content | contains("127.0.0.1:12350"))
+   and (.alloy.configMap.content | contains("127.0.0.1:12351"))' \
   infrastructure/monitoring/alloy-talos/values.yaml
 ```
 
@@ -1888,10 +1895,10 @@ Nothing has been sent yet, so an idle collector here is the expected state.
 - [ ] **Step 10: Check the host ports are actually free on every node**
 
 ```bash
-kubectl -n monitoring exec daemonset/alloy-talos -- netstat -tlnp 2>/dev/null | grep -E '1234[56]' || echo "check with ss instead"
+kubectl -n monitoring exec daemonset/alloy-talos -- netstat -tlnp 2>/dev/null | grep -E '1235[01]' || echo "check with ss instead"
 ```
 
-Expected: Alloy listening on `127.0.0.1:12345` and `127.0.0.1:12346`. A port already in use shows as a bind error in Step 9's logs.
+Expected: Alloy listening on `127.0.0.1:12350` and `127.0.0.1:12351`. A port already in use shows as a bind error in Step 9's logs.
 
 - [ ] **Step 11: Add the Talos machine config through Omni**
 
@@ -1901,7 +1908,7 @@ This is the manual, out-of-repo step. In Omni, patch the machine config for **al
 machine:
   logging:
     destinations:
-      - endpoint: "tcp://127.0.0.1:12345/"
+      - endpoint: "tcp://127.0.0.1:12350/"
         format: "json_lines"
 ```
 
@@ -1911,7 +1918,7 @@ And, as a separate config document for kernel logs:
 apiVersion: v1alpha1
 kind: KmsgLogConfig
 name: remote-log
-url: tcp://127.0.0.1:12346/
+url: tcp://127.0.0.1:12351/
 ```
 
 `KmsgLogConfig` is used rather than the `talos.logging.kernel` kernel argument on purpose: `extraKernelArgs` take effect only on a Talos **upgrade**, while this document applies on an ordinary config apply.
