@@ -55,8 +55,12 @@ alloy:
           source_labels = ["__meta_kubernetes_pod_container_name"]
           target_label  = "container"
         }
+        // Must be the pod-role label. __meta_kubernetes_node_name belongs to
+        // the `node` role; on a pod target it resolves to empty, and an empty
+        // replacement DELETES the label rather than setting it — so the `node`
+        // label silently would not exist at all.
         rule {
-          source_labels = ["__meta_kubernetes_node_name"]
+          source_labels = ["__meta_kubernetes_pod_node_name"]
           target_label  = "node"
         }
         // Prefer the standard app label; fall back to the controller name so
