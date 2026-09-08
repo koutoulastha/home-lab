@@ -37,10 +37,17 @@ data:
 
           # An internet-facing login page. Purely a log signal: Grafana emits
           # no metric for failed authentication.
+          #
+          # Matches the error ID Grafana actually logs, not the message it
+          # shows the user. "Invalid username or password" is a public message
+          # attached to the error (errutil.WithPublicMessage) and is returned
+          # in the HTTP response body — it never reaches the log. The logged
+          # line is msg="Failed to authenticate request" with
+          # error="[password-auth.failed] ...".
           - alert: GrafanaAuthFailureBurst
             expr: |
               sum (
-                count_over_time({namespace="monitoring", app="grafana"} |~ "(?i)invalid username or password"[5m])
+                count_over_time({namespace="monitoring", app="grafana"} |= "password-auth"[5m])
               ) > 10
             for: 5m
             labels:
