@@ -194,8 +194,8 @@ In-cluster, these are received with `otelcol.receiver.tcplog` on loopback, bridg
 
 | Stream | Node endpoint | Talos configuration |
 |---|---|---|
-| Service logs | `tcp://127.0.0.1:12345/` | `machine.logging.destinations` |
-| Kernel logs | `tcp://127.0.0.1:12346/` | `KmsgLogConfig` document |
+| Service logs | `tcp://127.0.0.1:12350/` | `machine.logging.destinations` |
+| Kernel logs | `tcp://127.0.0.1:12351/` | `KmsgLogConfig` document |
 
 Because the DaemonSet uses `hostNetwork`, these are host ports and must not collide with anything else on the node; both are outside the Kubernetes NodePort range and are checked against listening ports during task 6.
 

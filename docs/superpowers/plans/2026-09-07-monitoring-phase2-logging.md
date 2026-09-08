@@ -183,6 +183,7 @@ singleBinary:
       cpu: 100m
       memory: 512Mi
     limits:
+      memory: 2Gi
 
 # Zero out the replica counts of the other deployment modes. This is NOT
 # optional and NOT tidiness: the chart defaults backend/read/write to 3
@@ -204,7 +205,6 @@ read:
   replicas: 0
 write:
   replicas: 0
-      memory: 2Gi
 
 # No Recreate strategy here, deliberately. This is a StatefulSet, not a
 # Deployment: it terminates the old pod before creating its replacement under
@@ -532,27 +532,6 @@ alloy:
       cpu: 50m
       memory: 128Mi
     limits:
-
-# Zero out the replica counts of the other deployment modes. This is NOT
-# optional and NOT tidiness: the chart defaults backend/read/write to 3
-# replicas each, deploymentMode: SingleBinary does not zero them, and
-# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
-# a ComparisonError and the Application never syncs. The chart's own
-# single-binary-values.yaml carries the same block.
-#
-# Only these three default non-zero. Every distributed target (ingester,
-# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
-# queryScheduler) already defaults to 0 and is deliberately not listed.
-#
-# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
-# target, which is a different thing from `loki.compactor` above --- that one
-# carries retention_enabled and must not be touched.
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
       memory: 512Mi
 
   configMap:
@@ -588,8 +567,12 @@ write:
           source_labels = ["__meta_kubernetes_pod_container_name"]
           target_label  = "container"
         }
+        // Must be the pod-role label. __meta_kubernetes_node_name belongs to
+        // the `node` role; on a pod target it resolves to empty, and an empty
+        // replacement DELETES the label rather than setting it — so the `node`
+        // label silently would not exist at all.
         rule {
-          source_labels = ["__meta_kubernetes_node_name"]
+          source_labels = ["__meta_kubernetes_pod_node_name"]
           target_label  = "node"
         }
         // Prefer the standard app label; fall back to the controller name so
@@ -602,6 +585,16 @@ write:
           source_labels = ["app", "__meta_kubernetes_pod_controller_name"]
           separator     = ";"
           regex         = ";(.*)"
+          target_label  = "app"
+          replacement   = "$1"
+        }
+        // Strip the ReplicaSet hash suffix. Without this, a Deployment pod
+        // with no app.kubernetes.io/name label gets app="grafana-7d8f9c4b" —
+        // a value that changes on every rollout, which is an unbounded stream
+        // label and exactly what the cardinality rules above exist to prevent.
+        rule {
+          source_labels = ["app"]
+          regex         = "(.+)-[0-9a-f]{6,10}"
           target_label  = "app"
           replacement   = "$1"
         }
@@ -638,6 +631,60 @@ write:
         stage.labels {
           values = {
             stream = "",
+          }
+        }
+
+        // Traefik access logs only. Everything else passes through untouched —
+        // a selector, not a filter, so no other workload's logs are affected.
+        stage.match {
+          selector = "{namespace=\"traefik\", app=\"traefik\"}"
+
+          // Drop health and metrics polling before it costs any storage. These
+          // are a constant, high-rate background that answers no question
+          // anyone asks 30 days later.
+          stage.drop {
+            expression = ".*\"RequestPath\":\"/(ping|healthz|metrics)\".*"
+          }
+
+          stage.json {
+            expressions = {
+              client_addr = "ClientAddr",
+              method      = "RequestMethod",
+              path        = "RequestPath",
+              status      = "DownstreamStatus",
+              router      = "RouterName",
+              duration    = "Duration",
+            }
+          }
+
+          // Bounded values become labels. `router` is bounded by the number of
+          // HTTPRoutes; status_class is three or four values.
+          // atoi returns 0 when the value is missing or non-numeric, so the
+          // `< 100` branch must come first. Without it a status Traefik did
+          // not record falls through to the else and is labelled 2xx — a
+          // failed request silently counted as a success.
+          stage.template {
+            source   = "status_class"
+            template = "{{ if lt (atoi .status) 100 }}unknown{{ else if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+          }
+          stage.labels {
+            values = {
+              status_class = "",
+              router       = "",
+            }
+          }
+
+          // Unbounded values become structured metadata: queryable, but never
+          // part of a stream key. Request path as a label would be unbounded
+          // cardinality, and client_addr nearly so.
+          stage.structured_metadata {
+            values = {
+              client_addr = "",
+              path        = "",
+              method      = "",
+              status      = "",
+              duration    = "",
+            }
           }
         }
 
@@ -893,27 +940,6 @@ alloy:
       cpu: 25m
       memory: 128Mi
     limits:
-
-# Zero out the replica counts of the other deployment modes. This is NOT
-# optional and NOT tidiness: the chart defaults backend/read/write to 3
-# replicas each, deploymentMode: SingleBinary does not zero them, and
-# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
-# a ComparisonError and the Application never syncs. The chart's own
-# single-binary-values.yaml carries the same block.
-#
-# Only these three default non-zero. Every distributed target (ingester,
-# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
-# queryScheduler) already defaults to 0 and is deliberately not listed.
-#
-# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
-# target, which is a different thing from `loki.compactor` above --- that one
-# carries retention_enabled and must not be touched.
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
       memory: 256Mi
 
   configMap:
@@ -1429,10 +1455,17 @@ data:
 
           # An internet-facing login page. Purely a log signal: Grafana emits
           # no metric for failed authentication.
+          #
+          # Matches the error ID Grafana actually logs, not the message it
+          # shows the user. "Invalid username or password" is a public message
+          # attached to the error (errutil.WithPublicMessage) and is returned
+          # in the HTTP response body — it never reaches the log. The logged
+          # line is msg="Failed to authenticate request" with
+          # error="[password-auth.failed] ...".
           - alert: GrafanaAuthFailureBurst
             expr: |
               sum (
-                count_over_time({namespace="monitoring", app="grafana"} |~ "(?i)invalid username or password"[5m])
+                count_over_time({namespace="monitoring", app="grafana"} |= "password-auth"[5m])
               ) > 10
             for: 5m
             labels:
@@ -1444,10 +1477,17 @@ data:
           # Logging that silently stops looks exactly like a quiet cluster.
           # kube-system always produces some traffic, so zero here means the
           # pipeline is broken, not that nothing happened.
+          # The `or vector(0)` is load-bearing. LogQL returns no series (not a
+          # zero) when nothing matches, and `empty == 0` is empty — so without
+          # it this alert stays inactive through the very outage it exists to
+          # catch. This is the documented Loki idiom for alerting on absence.
           - alert: LogIngestionStopped
             expr: |
-              sum (
-                count_over_time({namespace="kube-system"}[10m])
+              (
+                sum (
+                  count_over_time({namespace="kube-system"}[10m])
+                )
+                or vector(0)
               ) == 0
             for: 15m
             labels:
@@ -1659,6 +1699,13 @@ Expected: FAIL — `Error: ... no such file or directory`
 # log path just to collect node logs. Keeping it here also means the pod-logs
 # DaemonSet needs no hostNetwork at all, and that this whole experiment can be
 # deleted in one command.
+#
+# Ports are 12350/12351, deliberately NOT 12345/12346: the alloy chart's own
+# HTTP server defaults to listenPort 12345 on 0.0.0.0, and because this
+# instance runs hostNetwork that server shares a network namespace with these
+# receivers. Binding 12345 here races Alloy's own server for the port; the
+# readiness probe is on 12345 too, so the pod would report Ready while
+# silently dropping every Talos service log.
 
 controller:
   type: daemonset
@@ -1685,46 +1732,25 @@ alloy:
       cpu: 25m
       memory: 128Mi
     limits:
-
-# Zero out the replica counts of the other deployment modes. This is NOT
-# optional and NOT tidiness: the chart defaults backend/read/write to 3
-# replicas each, deploymentMode: SingleBinary does not zero them, and
-# templates/validate.yaml:30 then refuses to render at all --- ArgoCD reports
-# a ComparisonError and the Application never syncs. The chart's own
-# single-binary-values.yaml carries the same block.
-#
-# Only these three default non-zero. Every distributed target (ingester,
-# querier, distributor, compactor, ruler, indexGateway, queryFrontend,
-# queryScheduler) already defaults to 0 and is deliberately not listed.
-#
-# NOTE: a top-level `compactor:` here would be the DISTRIBUTED compactor
-# target, which is a different thing from `loki.compactor` above --- that one
-# carries retention_enabled and must not be touched.
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
       memory: 256Mi
 
   configMap:
     content: |
       // ---------------------------------------------------------------------
-      // Talos service logs: machine.logging.destinations -> tcp://127.0.0.1:12345
+      // Talos service logs: machine.logging.destinations -> tcp://127.0.0.1:12350
       // ---------------------------------------------------------------------
       otelcol.receiver.tcplog "talos_service" {
-        listen_address = "127.0.0.1:12345"
+        listen_address = "127.0.0.1:12350"
         output {
           logs = [otelcol.processor.batch.talos.input]
         }
       }
 
       // ---------------------------------------------------------------------
-      // Talos kernel logs: KmsgLogConfig -> tcp://127.0.0.1:12346
+      // Talos kernel logs: KmsgLogConfig -> tcp://127.0.0.1:12351
       // ---------------------------------------------------------------------
       otelcol.receiver.tcplog "talos_kernel" {
-        listen_address = "127.0.0.1:12346"
+        listen_address = "127.0.0.1:12351"
         output {
           logs = [otelcol.processor.batch.talos.input]
         }
@@ -1831,8 +1857,8 @@ yq -e '.controller.type == "daemonset"
    and .controller.hostNetwork == true
    and .controller.dnsPolicy == "ClusterFirstWithHostNet"
    and .alloy.stabilityLevel == "experimental"
-   and (.alloy.configMap.content | contains("127.0.0.1:12345"))
-   and (.alloy.configMap.content | contains("127.0.0.1:12346"))' \
+   and (.alloy.configMap.content | contains("127.0.0.1:12350"))
+   and (.alloy.configMap.content | contains("127.0.0.1:12351"))' \
   infrastructure/monitoring/alloy-talos/values.yaml
 ```
 
@@ -1900,10 +1926,10 @@ Nothing has been sent yet, so an idle collector here is the expected state.
 - [ ] **Step 10: Check the host ports are actually free on every node**
 
 ```bash
-kubectl -n monitoring exec daemonset/alloy-talos -- netstat -tlnp 2>/dev/null | grep -E '1234[56]' || echo "check with ss instead"
+kubectl -n monitoring exec daemonset/alloy-talos -- netstat -tlnp 2>/dev/null | grep -E '1235[01]' || echo "check with ss instead"
 ```
 
-Expected: Alloy listening on `127.0.0.1:12345` and `127.0.0.1:12346`. A port already in use shows as a bind error in Step 9's logs.
+Expected: Alloy listening on `127.0.0.1:12350` and `127.0.0.1:12351`. A port already in use shows as a bind error in Step 9's logs.
 
 - [ ] **Step 11: Add the Talos machine config through Omni**
 
@@ -1913,9 +1939,17 @@ This is the manual, out-of-repo step. In Omni, patch the machine config for **al
 machine:
   logging:
     destinations:
-      - endpoint: "tcp://127.0.0.1:12345/"
+      - endpoint: "tcp://127.0.0.1:12350/"
         format: "json_lines"
+        extraTags:
+          node: <this-node-name>
 ```
+
+`extraTags` is not optional. Talos sends no node identity of its own, so without
+it every node's logs arrive as one indistinguishable `{job="talos"}` stream and
+the per-node coverage check in Step 14 cannot be satisfied — a node that stopped
+shipping would look exactly like a quiet node. The value differs per machine, so
+this patch is not identical across nodes.
 
 And, as a separate config document for kernel logs:
 
@@ -1923,7 +1957,7 @@ And, as a separate config document for kernel logs:
 apiVersion: v1alpha1
 kind: KmsgLogConfig
 name: remote-log
-url: tcp://127.0.0.1:12346/
+url: tcp://127.0.0.1:12351/
 ```
 
 `KmsgLogConfig` is used rather than the `talos.logging.kernel` kernel argument on purpose: `extraKernelArgs` take effect only on a Talos **upgrade**, while this document applies on an ordinary config apply.
