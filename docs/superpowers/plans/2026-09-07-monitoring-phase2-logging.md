@@ -51,7 +51,7 @@
 
 | File | Change |
 |---|---|
-| `infrastructure/networking/traefik/values.yaml` | Add the `logs.access` block (Task 4) |
+| `infrastructure/networking/traefik/values.yaml` | Add the `accessLog` block (Task 4) |
 | `infrastructure/monitoring/kube-prometheus-stack/alertrules.yaml` | Add the Loki PVC utilisation alert (Task 5) |
 
 ---
@@ -1095,7 +1095,7 @@ Report: the replica count, and the total-vs-unique numbers from Step 10.
 
 **Interfaces:**
 - Consumes: the pod-log pipeline from Task 2 — access logs are Traefik's stdout, so they already arrive; this task only adds parsing.
-- Produces: the labels `status_class` and `router`, plus structured metadata `client_addr`, `path`, `method`, `duration_ms`.
+- Produces: the labels `status_class` and `router`, plus structured metadata `client_addr`, `path`, `method`, `status`, `duration` (Traefik's raw `Duration` field, not milliseconds).
 
 - [ ] **Step 1: Branch**
 
@@ -1112,7 +1112,7 @@ Expected: `feat/logging-traefik-access`
 
 ```bash
 cd /home/koutoulastha/workspace/homelab
-yq -e '.logs.access.enabled == true and .logs.access.format == "json"' \
+yq -e '.accessLog.enabled == true and .accessLog.format == "json"' \
   infrastructure/networking/traefik/values.yaml
 ```
 
@@ -1120,7 +1120,7 @@ Expected: FAIL — prints `false` (the file exists; the key does not).
 
 - [ ] **Step 3: Append the access log block to `infrastructure/networking/traefik/values.yaml`**
 
-Add at the end of the file, matching the existing comment style:
+Add at the end of the file, matching the existing comment style. The chart has no `logs` key — the correct root key is `accessLog`, and the chart ships `values.schema.json` with root `additionalProperties: false`, so a wrong key fails schema validation and breaks the Application's sync entirely:
 
 ```yaml
 # Access logging, off by default in this chart. JSON rather than the default
@@ -1131,27 +1131,31 @@ Add at the end of the file, matching the existing comment style:
 # 50Gi budget. Health and metrics endpoints are dropped on the Alloy side
 # rather than here, so that a request that 500s on /healthz is still visible
 # in Traefik's own debug output if it is ever needed.
-logs:
-  access:
-    enabled: true
-    format: json
-    fields:
-      headers:
-        defaultMode: drop
-        names:
-          # Deliberately minimal. Authorization and Cookie headers must never
-          # be logged: these lines are retained for 30 days and this is an
-          # internet-facing edge.
-          User-Agent: keep
+#
+# The chart's default for accessLog.fields.headers.defaultMode is already
+# drop, and accessLog.addInternals defaults to false so Traefik's own
+# internal endpoints (api@internal, dashboard, ping) are not access-logged
+# at all. Set explicitly below for clarity.
+accessLog:
+  enabled: true
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        # Deliberately minimal. Authorization and Cookie headers must never
+        # be logged: these lines are retained for 30 days and this is an
+        # internet-facing edge.
+        User-Agent: keep
 ```
 
 - [ ] **Step 4: Run the check and watch it pass**
 
 ```bash
 cd /home/koutoulastha/workspace/homelab
-yq -e '.logs.access.enabled == true
-   and .logs.access.format == "json"
-   and .logs.access.fields.headers.defaultMode == "drop"' \
+yq -e '.accessLog.enabled == true
+   and .accessLog.format == "json"
+   and .accessLog.fields.headers.defaultMode == "drop"' \
   infrastructure/networking/traefik/values.yaml
 ```
 
@@ -1208,9 +1212,13 @@ Replace the `loki.process "pod_logs"` block with the version below. The CRI and 
 
           // Bounded values become labels. `router` is bounded by the number of
           // HTTPRoutes; status_class is three or four values.
+          // atoi returns 0 when the value is missing or non-numeric, so the
+          // `< 100` branch must come first. Without it a status Traefik did
+          // not record falls through to the else and is labelled 2xx — a
+          // failed request silently counted as a success.
           stage.template {
             source   = "status_class"
-            template = "{{ if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+            template = "{{ if lt (atoi .status) 100 }}unknown{{ else if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
           }
           stage.labels {
             values = {
@@ -2014,4 +2022,4 @@ kubectl -n argocd delete application loki           # PVC is RETAINED by design
 
 Deleting `loki` leaves its PVC behind deliberately — `whenDeleted: Retain` in Task 1. To reclaim the 50Gi, delete the PVC explicitly after confirming the logs are not wanted.
 
-Reverting Task 4 needs a commit, not a delete: remove the `logs.access` block from `infrastructure/networking/traefik/values.yaml`, since Traefik is a Phase 1 Application shared with the metrics path.
+Reverting Task 4 needs a commit, not a delete: remove the `accessLog` block from `infrastructure/networking/traefik/values.yaml`, since Traefik is a Phase 1 Application shared with the metrics path.

@@ -1,0 +1,201 @@
+# grafana/alloy 1.12.1 (Alloy v1.19.2). Pod log collection.
+#
+# This instance stays at the default `generally-available` stability level and
+# uses no hostNetwork. The Talos receivers need both loosened, which is exactly
+# why they live in a separate alloy-talos Application (Task 6) rather than here.
+
+controller:
+  type: daemonset
+
+alloy:
+  # Mounts /var/log, which is where the kubelet writes every container's stdout.
+  # Combined with the hostPath this implies, it is the reason the `monitoring`
+  # namespace must stay pod-security enforce: privileged. Under `baseline` this
+  # DaemonSet is rejected SILENTLY — desired > 0, current 0, no pods, no events.
+  mounts:
+    varlog: true
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+  configMap:
+    content: |
+      // ---------------------------------------------------------------------
+      // Discovery: every pod in the cluster, with its metadata.
+      // ---------------------------------------------------------------------
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // Turn Kubernetes metadata into the stream labels, and build the path to
+      // the container's log file on this node.
+      //
+      // Label discipline (see spec, "Label cardinality"): everything here is
+      // bounded. `pod` is included because it does not multiply the stream
+      // count — each pod belongs to exactly one namespace/app/container — and
+      // it is what makes a crash-loop investigation navigable. Request paths
+      // and client IPs are NOT labels anywhere; they are structured metadata,
+      // added in Task 4 where they are actually parsed.
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        // Must be the pod-role label. __meta_kubernetes_node_name belongs to
+        // the `node` role; on a pod target it resolves to empty, and an empty
+        // replacement DELETES the label rather than setting it — so the `node`
+        // label silently would not exist at all.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+        // Prefer the standard app label; fall back to the controller name so
+        // workloads that do not set it are still grouped by something stable.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["app", "__meta_kubernetes_pod_controller_name"]
+          separator     = ";"
+          regex         = ";(.*)"
+          target_label  = "app"
+          replacement   = "$1"
+        }
+        // Strip the ReplicaSet hash suffix. Without this, a Deployment pod
+        // with no app.kubernetes.io/name label gets app="grafana-7d8f9c4b" —
+        // a value that changes on every rollout, which is an unbounded stream
+        // label and exactly what the cardinality rules above exist to prevent.
+        rule {
+          source_labels = ["app"]
+          regex         = "(.+)-[0-9a-f]{6,10}"
+          target_label  = "app"
+          replacement   = "$1"
+        }
+
+        // The kubelet lays these out as
+        //   /var/log/pods/<namespace>_<pod>_<uid>/<container>/*.log
+        // so uid + container name is enough to reach exactly one directory.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          separator     = "/"
+          action        = "replace"
+          replacement   = "/var/log/pods/*$1/*.log"
+          target_label  = "__path__"
+        }
+      }
+
+      local.file_match "pod_logs" {
+        path_targets = discovery.relabel.pod_logs.output
+      }
+
+      loki.source.file "pod_logs" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      loki.process "pod_logs" {
+        // The kubelet writes CRI format: "<time> <stream> <flags> <line>".
+        // Without this stage every log line arrives with that prefix glued on
+        // and the real timestamp is ignored in favour of ingestion time.
+        stage.cri {}
+
+        // stage.cri puts `stream` (stdout/stderr) in the extracted map; promote
+        // it so stderr can be filtered on without a line-content match.
+        stage.labels {
+          values = {
+            stream = "",
+          }
+        }
+
+        // Traefik access logs only. Everything else passes through untouched —
+        // a selector, not a filter, so no other workload's logs are affected.
+        stage.match {
+          selector = "{namespace=\"traefik\", app=\"traefik\"}"
+
+          // Drop health and metrics polling before it costs any storage. These
+          // are a constant, high-rate background that answers no question
+          // anyone asks 30 days later.
+          stage.drop {
+            expression = ".*\"RequestPath\":\"/(ping|healthz|metrics)\".*"
+          }
+
+          stage.json {
+            expressions = {
+              client_addr = "ClientAddr",
+              method      = "RequestMethod",
+              path        = "RequestPath",
+              status      = "DownstreamStatus",
+              router      = "RouterName",
+              duration    = "Duration",
+            }
+          }
+
+          // Bounded values become labels. `router` is bounded by the number of
+          // HTTPRoutes; status_class is three or four values.
+          // atoi returns 0 when the value is missing or non-numeric, so the
+          // `< 100` branch must come first. Without it a status Traefik did
+          // not record falls through to the else and is labelled 2xx — a
+          // failed request silently counted as a success.
+          stage.template {
+            source   = "status_class"
+            template = "{{ if lt (atoi .status) 100 }}unknown{{ else if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+          }
+          stage.labels {
+            values = {
+              status_class = "",
+              router       = "",
+            }
+          }
+
+          // Unbounded values become structured metadata: queryable, but never
+          // part of a stream key. Request path as a label would be unbounded
+          // cardinality, and client_addr nearly so.
+          stage.structured_metadata {
+            values = {
+              client_addr = "",
+              path        = "",
+              method      = "",
+              status      = "",
+              duration    = "",
+            }
+          }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // ---------------------------------------------------------------------
+      // Single write path, shared by every source in this instance.
+      // ---------------------------------------------------------------------
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+# The chart installs the PodLogs CRD used by loki.source.podlogs. This config
+# discovers pods directly and never references that CRD, so the cluster does
+# not need it.
+crds:
+  create: false
+
+# Alloy scrapes its own metrics; Prometheus should have them, for the same
+# reason Loki gets a ServiceMonitor — a broken collector otherwise looks
+# identical to a quiet cluster.
+serviceMonitor:
+  enabled: true
