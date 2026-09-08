@@ -439,8 +439,16 @@ kubectl -n monitoring logs loki-0 --tail=50
 
 - [ ] **Step 13: Confirm Loki reports ready**
 
+The `grafana/loki` image is distroless: no shell, no `wget`, no `curl`. Every Loki API check in this plan and the tasks after it goes through a port-forward instead. Open it once and leave it running.
+
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- http://127.0.0.1:3100/ready
+# Terminal A — leave this running for the rest of the rollout
+kubectl -n monitoring port-forward pod/loki-0 3100:3100
+```
+
+```bash
+# Terminal B
+curl -s http://127.0.0.1:3100/ready
 ```
 
 Expected: `ready`
@@ -784,8 +792,9 @@ sleep 20
 - [ ] **Step 12: Prove the line reached Loki**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/query_range?query=%7Bnamespace%3D%22default%22%7D%20%7C%3D%20%22PHASE2_CANARY_LINE%22&limit=5' \
+curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={namespace="default"} |= "PHASE2_CANARY_LINE"' \
+  --data limit=5 \
   | jq '.data.result[].values'
 ```
 
@@ -796,8 +805,7 @@ An empty result means the pipeline is broken somewhere between the file and the 
 - [ ] **Step 13: Confirm the stream labels are the ones intended**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/labels' | jq '.data'
+curl -s http://127.0.0.1:3100/loki/api/v1/labels | jq '.data'
 ```
 
 Expected: includes `namespace`, `app`, `container`, `node`, `pod`, `stream`.
@@ -1037,8 +1045,9 @@ kubectl -n default delete pod eventtest
 - [ ] **Step 10: Prove events reached Loki and are not duplicated**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/query_range?query=%7Bjob%3D%22kubernetes-events%22%7D%20%7C%3D%20%22eventtest%22&limit=100' \
+curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={job="kubernetes-events"} |= "eventtest"' \
+  --data limit=100 \
   | jq '[.data.result[].values[][1]] | length as $n | {total: $n, unique: (unique | length)}'
 ```
 
@@ -1274,8 +1283,9 @@ Expected: `200` then `404`. The 404 is deliberate — it gives a non-2xx line to
 - [ ] **Step 12: Confirm access logs arrive parsed**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/query_range?query=%7Bapp%3D%22traefik%22%2C%20status_class%3D%224xx%22%7D&limit=5' \
+curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={app="traefik", status_class="4xx"}' \
+  --data limit=5 \
   | jq '.data.result[] | {labels: .stream, sample: .values[0][1]}'
 ```
 
@@ -1286,8 +1296,9 @@ If results come back but `status_class` is absent, the `stage.template` did not 
 - [ ] **Step 13: Confirm health endpoints are being dropped**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/query_range?query=%7Bapp%3D%22traefik%22%7D%20%7C%3D%20%22%2Fhealthz%22&limit=5' \
+curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={app="traefik"} |= "/healthz"' \
+  --data limit=5 \
   | jq '.data.result | length'
 ```
 
@@ -1295,7 +1306,7 @@ Expected: `0`
 
 - [ ] **Step 14: Report before continuing**
 
-Report: the parsed result from Step 12 including its label set, the drop-check count from Step 13, and confirmation that Traefik metrics still work (`kubectl -n monitoring exec loki-0 -- true` is not enough here — check a Grafana Traefik panel or the Prometheus target page).
+Report: the parsed result from Step 12 including its label set, the drop-check count from Step 13, and confirmation that Traefik metrics still work (a Loki query is not enough here — check a Grafana Traefik panel or the Prometheus target page).
 
 ---
 
@@ -1544,7 +1555,7 @@ Then open and merge the PR to `main`.
 
 ```bash
 kubectl -n argocd get application loki -w   # wait for Synced/Healthy, then Ctrl-C
-kubectl -n monitoring exec loki-0 -- wget -qO- http://127.0.0.1:3100/loki/api/v1/rules | jq '.data.groups[].name'
+curl -s http://127.0.0.1:3100/loki/api/v1/rules | jq '.data.groups[].name'
 ```
 
 Expected: `log-only-signals`.
@@ -1552,7 +1563,8 @@ Expected: `log-only-signals`.
 **If this returns an empty list, the sidecar folder and the ruler directory disagree** — that is the `/rules` vs `/rules/fake` pairing in Step 3. Check what actually landed on disk before changing config:
 
 ```bash
-kubectl -n monitoring exec loki-0 -c loki -- ls -R /rules
+# the `loki` container is distroless; the rules sidecar mounts the same volume and has a shell
+kubectl -n monitoring exec loki-0 -c loki-sc-rules -- ls -R /rules
 ```
 
 Report what you see rather than guessing at the fix.
@@ -1577,7 +1589,7 @@ kubectl -n default run fatalspam --image=busybox --restart=Never -- \
 Wait up to 12 minutes (5m window + 10m `for:` overlap), then check:
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- http://127.0.0.1:3100/loki/api/v1/rules \
+curl -s http://127.0.0.1:3100/loki/api/v1/rules \
   | jq '.data.groups[].rules[] | {name: .name, state: .state}'
 ```
 
@@ -1921,8 +1933,9 @@ Apply to one node first and confirm Step 12 before rolling to the rest.
 - [ ] **Step 12: Prove node logs reached Loki**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/query_range?query=%7Bjob%3D%22talos%22%7D&limit=10' \
+curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={job="talos"}' \
+  --data limit=10 \
   | jq '.data.result[] | {labels: .stream, sample: .values[0][1]}'
 ```
 
@@ -1933,8 +1946,7 @@ If nothing arrives: confirm from Alloy's side first (`kubectl -n monitoring logs
 - [ ] **Step 13: Confirm both streams, service and kernel**
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/label/service/values' | jq '.data'
+curl -s http://127.0.0.1:3100/loki/api/v1/label/service/values | jq '.data'
 ```
 
 Expected: several Talos service names. Kernel lines arrive with no `talos-service`, so they appear without a `service` label — query `{job="talos"}` and look for kernel-style messages to confirm the second port works.
@@ -1944,8 +1956,7 @@ Expected: several Talos service names. Kernel lines arrive with no `talos-servic
 After applying the machine config to all nodes:
 
 ```bash
-kubectl -n monitoring exec loki-0 -- wget -qO- \
-  'http://127.0.0.1:3100/loki/api/v1/label/node/values' | jq '.data'
+curl -s http://127.0.0.1:3100/loki/api/v1/label/node/values | jq '.data'
 ```
 
 Expected: every node name appears.
