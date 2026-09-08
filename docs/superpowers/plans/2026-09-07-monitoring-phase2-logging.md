@@ -665,7 +665,21 @@ alloy:
           // failed request silently counted as a success.
           stage.template {
             source   = "status_class"
-            template = "{{ if lt (atoi .status) 100 }}unknown{{ else if ge (atoi .status) 500 }}5xx{{ else if ge (atoi .status) 400 }}4xx{{ else if ge (atoi .status) 300 }}3xx{{ else }}2xx{{ end }}"
+            // The alloy chart passes configMap.content through Helm's `tpl`
+            // (templates/configmap.yaml, unconditional -- there is no flag to
+            // turn it off). Helm therefore evaluates this Go template BEFORE
+            // Loki ever sees it, resolving .status against the chart context
+            // where it does not exist, and manifest generation dies with
+            // "wrong type for value; expected string; got interface {}".
+            //
+            // The escape below is a template action whose body is the string
+            // literal for an opening delimiter: Helm evaluates it, emits the
+            // two braces verbatim, and never dereferences .status. What
+            // stage.template finally receives is the plain conditional.
+            //
+            // Do not write a bare opening delimiter anywhere in this file,
+            // including in comments -- tpl parses those too.
+            template = "{{ "{{" }} if lt (atoi .status) 100 }}unknown{{ "{{" }} else if ge (atoi .status) 500 }}5xx{{ "{{" }} else if ge (atoi .status) 400 }}4xx{{ "{{" }} else if ge (atoi .status) 300 }}3xx{{ "{{" }} else }}2xx{{ "{{" }} end }}"
           }
           stage.labels {
             values = {
