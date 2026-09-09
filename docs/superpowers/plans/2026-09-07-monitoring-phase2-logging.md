@@ -1521,8 +1521,13 @@ data:
               description: "More than 10 failed Grafana login attempts in 5 minutes on an internet-facing login page."
 
           # Logging that silently stops looks exactly like a quiet cluster.
-          # kube-system always produces some traffic, so zero here means the
-          # pipeline is broken, not that nothing happened.
+          # The selector must therefore match every stream, not one namespace.
+          # This rule originally selected kube-system on the assumption that it
+          # always produces traffic; measured on this cluster it produces about
+          # 2 lines per 10 minutes, so a 15m run of zeros is its ordinary quiet
+          # state and the alert fired continuously while ingestion was healthy.
+          # Matching all namespaces makes the query mean what the alert claims:
+          # nothing anywhere reached Loki.
           # The `or vector(0)` is load-bearing. LogQL returns no series (not a
           # zero) when nothing matches, and `empty == 0` is empty — so without
           # it this alert stays inactive through the very outage it exists to
@@ -1531,7 +1536,7 @@ data:
             expr: |
               (
                 sum (
-                  count_over_time({namespace="kube-system"}[10m])
+                  count_over_time({namespace=~".+"}[10m])
                 )
                 or vector(0)
               ) == 0
@@ -1539,7 +1544,7 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: "Loki has received no logs from kube-system for 15 minutes"
+              summary: "Loki has received no logs from any namespace for 15 minutes"
               description: "Alloy or Loki has stopped ingesting. Logs are not being collected and every other log alert here is now blind."
 ```
 
