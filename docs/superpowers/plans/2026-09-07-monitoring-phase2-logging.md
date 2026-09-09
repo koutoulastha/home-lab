@@ -1643,12 +1643,20 @@ Then open and merge the PR to `main`.
 
 ```bash
 kubectl -n argocd get application loki -w   # wait for Synced/Healthy, then Ctrl-C
-curl -s http://127.0.0.1:3100/loki/api/v1/rules | jq '.data.groups[].name'
+# /loki/api/v1/rules is the ruler CONFIG api and returns YAML, not JSON --
+# piping it to jq fails with "Invalid numeric literal". The Prometheus-
+# compatible endpoint below returns JSON and is the one that carries rule state.
+curl -s http://127.0.0.1:3100/prometheus/api/v1/rules | jq '.data.groups[].name'
 ```
 
 Expected: `log-only-signals`.
 
-**If this returns an empty list, the sidecar folder and the ruler directory disagree** — that is the `/rules` vs `/rules/fake` pairing in Step 3. Check what actually landed on disk before changing config:
+The sidecar syncs on its own schedule after the ConfigMap appears, so check
+`kubectl -n monitoring logs loki-0 -c loki-sc-rules --tail=30` for a
+`Writing /rules/fake/...` line before concluding anything is wrong. An empty
+`/rules` seconds after the sync is normal.
+
+**If it is still empty once the sidecar has logged a write, the sidecar folder and the ruler directory disagree** — that is the `/rules` vs `/rules/fake` pairing in Step 3. Check what actually landed on disk before changing config:
 
 ```bash
 # the `loki` container is distroless; the rules sidecar mounts the same volume and has a shell
@@ -1677,7 +1685,7 @@ kubectl -n default run fatalspam --image=busybox --restart=Never -- \
 Wait up to 12 minutes (5m window + 10m `for:` overlap), then check:
 
 ```bash
-curl -s http://127.0.0.1:3100/loki/api/v1/rules \
+curl -s http://127.0.0.1:3100/prometheus/api/v1/rules \
   | jq '.data.groups[].rules[] | {name: .name, state: .state}'
 ```
 
