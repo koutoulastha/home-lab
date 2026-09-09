@@ -1547,6 +1547,8 @@ data:
 
 Append this rule to the end of the existing `homelab.rules` group in that file. The existing rules sit at 8 spaces of indentation for `- alert:`, which the block below matches — the file is a single `PrometheusRule` document, so a mis-indented append breaks every Phase 1 alert, not just this one.
 
+This task also edits the existing `PersistentVolumeFillingUp` rule (Phase 1) to exclude `persistentvolumeclaim=~"storage-loki-.*"` on both sides of its division. That rule's selector is unrestricted, so without the exclusion it and the new `LokiStorageFillingUp` both fire at `severity: warning` above 85% — two notifications for one condition. `PersistentVolumeFillingUpFast` is left untouched: it is predictive and critical, an escalation rather than a duplicate.
+
 ```yaml
         # Loki's only retention backstop. Unlike Prometheus, Loki has no
         # retentionSize setting — retention is purely by time, so a volume

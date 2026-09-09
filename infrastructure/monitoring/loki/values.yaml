@@ -71,6 +71,29 @@ loki:
     retention_enabled: true
     delete_request_store: filesystem
 
+  rulerConfig:
+    wal:
+      dir: /var/loki/ruler-wal
+    # The rules sidecar writes files into /rules. Loki's local ruler store
+    # expects <directory>/<tenant>/, and with auth_enabled: false the tenant
+    # is literally "fake" — hence the sidecar folder below being /rules/fake
+    # while this directory stays /rules. Getting this pair wrong loads zero
+    # rule groups and reports no error.
+    storage:
+      type: local
+      local:
+        directory: /rules
+    rule_path: /var/loki/rules-temp
+    ring:
+      kvstore:
+        store: inmemory
+    enable_api: true
+    # The Phase 1 Alertmanager. Nothing new is built here: these alerts
+    # inherit its ntfy routing, severity-to-priority mapping, null receiver,
+    # InfoInhibitor route and dead man's switch.
+    alertmanager_url: http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093
+    enable_alertmanager_v2: true
+
   server:
     http_listen_port: 3100
     grpc_listen_port: 9095
@@ -159,3 +182,15 @@ monitoring:
     enabled: false
   rules:
     enabled: false
+
+# Rules arrive as a labelled ConfigMap, discovered by the chart's sidecar —
+# the same pattern as the Grafana datasource. Changing a rule is then a commit,
+# not a chart upgrade.
+sidecar:
+  rules:
+    enabled: true
+    label: loki_rule
+    labelValue: "1"
+    # Must be <rulerConfig.storage.local.directory>/<tenant>. See the comment
+    # on rulerConfig.storage above.
+    folder: /rules/fake
