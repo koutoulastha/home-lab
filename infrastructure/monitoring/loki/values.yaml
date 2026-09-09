@@ -29,7 +29,20 @@ loki:
   # future schema change is an additional list entry, never an edit of this one.
   schemaConfig:
     configs:
-      - from: "2026-09-07"
+      # Must predate the oldest line any collector might ever replay, NOT the
+      # install date. Alloy keeps its file positions in ephemeral storage, so
+      # every Alloy pod restart re-tails each existing /var/log/pods file from
+      # the beginning and ships lines written long before Loki existed. A line
+      # older than this date is rejected with HTTP 500 "no schema config found
+      # for time", and a 500 fails the WHOLE batch --- current log lines
+      # batched alongside an old one are dropped with it.
+      #
+      # Moving this date backwards is safe on an existing install: index table
+      # names are derived from absolute epoch time (schema_config.go:598,
+      # `t.Unix() / periodSecs`), not relative to `from`, so already-written
+      # tables keep their names and stay readable. Validate() only requires
+      # that `from` values strictly increase across periods.
+      - from: "2026-01-01"
         store: tsdb
         object_store: filesystem
         schema: v13

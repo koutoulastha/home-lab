@@ -129,7 +129,20 @@ loki:
   # future schema change is an additional list entry, never an edit of this one.
   schemaConfig:
     configs:
-      - from: "2026-09-07"
+      # Must predate the oldest line any collector might ever replay, NOT the
+      # install date. Alloy keeps its file positions in ephemeral storage, so
+      # every Alloy pod restart re-tails each existing /var/log/pods file from
+      # the beginning and ships lines written long before Loki existed. A line
+      # older than this date is rejected with HTTP 500 "no schema config found
+      # for time", and a 500 fails the WHOLE batch --- current log lines
+      # batched alongside an old one are dropped with it.
+      #
+      # Moving this date backwards is safe on an existing install: index table
+      # names are derived from absolute epoch time (schema_config.go:598,
+      # `t.Unix() / periodSecs`), not relative to `from`, so already-written
+      # tables keep their names and stay readable. Validate() only requires
+      # that `from` values strictly increase across periods.
+      - from: "2026-01-01"
         store: tsdb
         object_store: filesystem
         schema: v13
@@ -632,6 +645,17 @@ alloy:
           values = {
             stream = "",
           }
+        }
+
+        // loki.source.file publishes __path__ as a `filename` label on every
+        // entry (see its docs: "The __path__ value is available as the
+        // filename label"). That path carries the pod UID and the log
+        // rotation index, so it is unbounded twice over: a new stream on
+        // every pod restart AND a new stream each time the kubelet rotates a
+        // file. Nothing queries it --- namespace/app/container/pod already
+        // identify the source --- so drop it before it reaches the stream key.
+        stage.label_drop {
+          values = ["filename"]
         }
 
         // Traefik access logs only. Everything else passes through untouched —
