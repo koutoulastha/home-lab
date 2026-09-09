@@ -122,6 +122,17 @@ alloy:
           }
         }
 
+        // loki.source.file publishes __path__ as a `filename` label on every
+        // entry (see its docs: "The __path__ value is available as the
+        // filename label"). That path carries the pod UID and the log
+        // rotation index, so it is unbounded twice over: a new stream on
+        // every pod restart AND a new stream each time the kubelet rotates a
+        // file. Nothing queries it --- namespace/app/container/pod already
+        // identify the source --- so drop it before it reaches the stream key.
+        stage.label_drop {
+          values = ["filename"]
+        }
+
         // Traefik access logs only. Everything else passes through untouched —
         // a selector, not a filter, so no other workload's logs are affected.
         stage.match {
