@@ -1987,10 +1987,19 @@ Nothing has been sent yet, so an idle collector here is the expected state.
 - [ ] **Step 10: Check the host ports are actually free on every node**
 
 ```bash
-kubectl -n monitoring exec daemonset/alloy-talos -- netstat -tlnp 2>/dev/null | grep -E '1235[01]' || echo "check with ss instead"
+# The alloy image ships neither netstat nor ss, and `2>/dev/null` hides the
+# "executable file not found" so the check looks like "nothing is listening".
+# /proc/net/tcp needs only cat, and under hostNetwork it is the node's own
+# table. Ports are hex: 303E=12350, 303F=12351, 3039=12345 (Alloy's own UI);
+# 0100007F is 127.0.0.1, 00000000 is all interfaces. The awk runs locally.
+kubectl -n monitoring exec daemonset/alloy-talos -- cat /proc/net/tcp \
+  | awk 'NR>1 {split($2,a,":"); print a[1], a[2]}' | grep -iE '303E|303F|3039'
 ```
 
-Expected: Alloy listening on `127.0.0.1:12350` and `127.0.0.1:12351`. A port already in use shows as a bind error in Step 9's logs.
+Expected: `0100007F 303E` and `0100007F 303F`. A port already in use shows as a bind
+error in Step 9's logs; conversely `Starting stanza receiver` logged for both
+`talos_service` and `talos_kernel` with no error after it is good evidence the
+binds succeeded, since a failed bind is logged at error level.
 
 - [ ] **Step 11: Add the Talos machine config through Omni**
 
