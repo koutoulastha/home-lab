@@ -1831,21 +1831,42 @@ alloy:
       }
 
       loki.process "talos" {
-        // Talos sends json_lines with msg, talos-level, talos-service and
-        // talos-time always present.
+        // otelcol.exporter.loki does NOT hand this stage the Talos line. It
+        // hands it an OTLP envelope with the line as a string inside:
+        //   {"body":"{\"msg\":\"...\",\"node\":\"...\",\"talos-service\":\"...\"}"}
+        // Parsing for a top-level `msg` therefore extracted nothing, every
+        // stage.labels value came out empty, and the whole Talos payload ---
+        // service, level and the node identity from extraTags --- stayed
+        // buried in the body where no selector can reach it. Unwrap the
+        // envelope first, then parse the payload out of it.
         stage.json {
+          expressions = {
+            body = "body",
+          }
+        }
+
+        // Talos sends json_lines with msg, talos-level, talos-service and
+        // talos-time present. `node` comes from the extraTags in the machine
+        // config; kernel logs arrive through KmsgLogConfig, which carries no
+        // extraTags, so they have neither `node` nor `talos-service` and are
+        // simply left without those labels.
+        stage.json {
+          source = "body"
           expressions = {
             msg      = "msg",
             level    = "\"talos-level\"",
             service  = "\"talos-service\"",
+            node     = "node",
           }
         }
 
-        // Bounded: a handful of Talos services, a handful of levels.
+        // Bounded: a handful of Talos services, a handful of levels, one value
+        // per node.
         stage.labels {
           values = {
             level   = "",
             service = "",
+            node    = "",
           }
         }
 
@@ -2053,7 +2074,7 @@ If nothing arrives: confirm from Alloy's side first (`kubectl -n monitoring logs
 curl -s http://127.0.0.1:3100/loki/api/v1/label/service/values | jq '.data'
 ```
 
-Expected: several Talos service names. Kernel lines arrive with no `talos-service`, so they appear without a `service` label — query `{job="talos"}` and look for kernel-style messages to confirm the second port works.
+Expected: several Talos service names. Kernel lines arrive through `KmsgLogConfig`, which carries no `extraTags`, so they have neither a `service` nor a `node` label — query `{job="talos"}` and look for kernel-style messages to confirm the second port works.
 
 - [ ] **Step 14: Roll out to the remaining nodes and verify coverage**
 
