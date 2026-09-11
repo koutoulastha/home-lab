@@ -197,7 +197,7 @@ In-cluster, these are received with `otelcol.receiver.tcplog` on loopback, bridg
 | Service logs | `tcp://127.0.0.1:12350/` | `machine.logging.destinations` |
 | Kernel logs | `tcp://127.0.0.1:12351/` | `KmsgLogConfig` document |
 
-Because the DaemonSet uses `hostNetwork`, these are host ports and must not collide with anything else on the node; both are outside the Kubernetes NodePort range and are checked against listening ports during task 6.
+Because the DaemonSet uses `hostNetwork`, these are host ports and must not collide with anything else on the node — including Alloy's own HTTP server, which shares this network namespace and defaults to `listenPort: 12345`; 12350/12351 are chosen specifically to avoid that collision. Both are outside the Kubernetes NodePort range and are checked against listening ports during task 6.
 
 **The Talos side is an Omni machine-config change, not a commit in this repo** — the same category as the Cilium metrics note in the Phase 1 spec. The implementation plan carries the exact configuration to paste as an explicit manual step. This is why Talos is the last task: it is the only part that cannot be completed or verified from this repository, and everything else is complete and useful without it.
 
