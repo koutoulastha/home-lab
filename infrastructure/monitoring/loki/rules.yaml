@@ -47,9 +47,21 @@ data:
           # is already covered by the Phase 1 restart metrics, and because a
           # broken Loki takes every rule in this file down with it anyway.
           #
-          # A `!=` matcher also keeps streams that carry no `app` label at all
-          # (absent compares equal to ""), so Talos and any unlabelled stream
-          # stay in scope.
+          # A `!=` matcher keeps streams that carry no `app` label at all
+          # (an absent label compares equal to ""), so pod streams without an
+          # `app` label stay in scope.
+          #
+          # Talos does NOT, and never did. Talos lines arrive from alloy-talos
+          # with job/service/node/level and no `namespace` label at all, and
+          # `namespace=~".+"` requires at least one character, so an absent
+          # namespace fails the match before `app!="loki"` is ever consulted.
+          # Measured: `sum by (job) (count_over_time({namespace=~".+"}[5m]))`
+          # returns only pod streams and kubernetes-events, never job="talos".
+          # This alert therefore covers containers only, which is what its name
+          # says, but it means a Talos kernel panic reaches nobody. Covering
+          # that needs its own rule against {job="talos"} -- deliberately not
+          # added here, because an alert nobody decided to want is how Phase 1
+          # ended up with rules that fired in healthy states.
           - alert: ContainerFatalErrors
             expr: |
               sum by (namespace, app, container) (
