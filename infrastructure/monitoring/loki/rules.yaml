@@ -23,10 +23,37 @@ data:
           # Restart metrics say a pod restarted. Only the log says why — and
           # only the log catches a process that logs a fatal error and then
           # keeps running in a broken state without ever restarting.
+          #
+          # `app!="loki"` is not an aesthetic exclusion, it breaks a feedback
+          # loop. Loki logs about its own query execution, Alloy ships those
+          # logs back into Loki, and two of those lines match this very regex:
+          #
+          #   1. The ruler logs every evaluation through an "insights" logger
+          #      built as msg="request timings" insight=true source=loki_ruler
+          #      (ruler/evaluator_local.go:38) and stamps the rule name onto it
+          #      (:67). "ContainerFatalErrors" contains "Fatal", and this regex
+          #      is case-insensitive, so the alert matches its own name.
+          #   2. The query path logs the served query verbatim as `query=`
+          #      (logql/metrics.go:151) at level=info. This expression contains
+          #      the string `fatal error|FATAL`, so every evaluation — and every
+          #      hand-run query using this pattern — writes a matching line.
+          #
+          # Left unexcluded the rule is self-sustaining: it fired continuously
+          # for a day and a half on an otherwise healthy cluster, reporting ~20
+          # matches per 5m against a threshold of 5, all of them its own.
+          #
+          # The cost is that a genuine Loki panic no longer reaches this alert.
+          # That is acceptable because it is the one container here whose crash
+          # is already covered by the Phase 1 restart metrics, and because a
+          # broken Loki takes every rule in this file down with it anyway.
+          #
+          # A `!=` matcher also keeps streams that carry no `app` label at all
+          # (absent compares equal to ""), so Talos and any unlabelled stream
+          # stay in scope.
           - alert: ContainerFatalErrors
             expr: |
               sum by (namespace, app, container) (
-                count_over_time({namespace=~".+"} |~ "(?i)(panic:|fatal error|FATAL)"[5m])
+                count_over_time({namespace=~".+", app!="loki"} |~ "(?i)(panic:|fatal error|FATAL)"[5m])
               ) > 5
             for: 10m
             labels:
