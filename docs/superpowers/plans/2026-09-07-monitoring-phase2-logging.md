@@ -1521,11 +1521,9 @@ data:
           # namespace fails the match before `app!="loki"` is ever consulted.
           # Measured: `sum by (job) (count_over_time({namespace=~".+"}[5m]))`
           # returns only pod streams and kubernetes-events, never job="talos".
-          # This alert therefore covers containers only, which is what its name
-          # says, but it means a Talos kernel panic reaches nobody. Covering
-          # that needs its own rule against {job="talos"} -- deliberately not
-          # added here, because an alert nobody decided to want is how Phase 1
-          # ended up with rules that fired in healthy states.
+          # This alert therefore covers containers only, which is what its
+          # name says. Talos kernel faults are covered separately by
+          # TalosKernelFault at the end of this group.
           - alert: ContainerFatalErrors
             expr: |
               sum by (namespace, app, container) (
@@ -1585,6 +1583,41 @@ data:
             annotations:
               summary: "Loki has received no logs from any namespace for 15 minutes"
               description: "Alloy or Loki has stopped ingesting. Logs are not being collected and every other log alert here is now blind."
+
+          # Talos kernel faults. A separate rule from ContainerFatalErrors
+          # because Talos streams carry no `namespace` label and so cannot
+          # match that rule's selector at all -- see the note on it above.
+          #
+          # Every pattern here is case-SENSITIVE and is a literal string the
+          # Linux kernel emits. There is no `(?i)` anywhere, deliberately: a
+          # case-insensitive `BUG:` matches the "bug:" inside "debug:", and
+          # Talos ships kernel debug lines by the thousand on every boot.
+          # Measured before this rule was written, a case-insensitive version
+          # of this pattern scored 90 matches in 24h on a healthy cluster and
+          # every single one was a "kern:   debug:" line. The patterns below
+          # score 0 over that same window.
+          #
+          # The threshold is > 0 rather than a tuned count. These strings do
+          # not appear in a healthy kernel at all, so any occurrence is the
+          # signal; a larger number would only delay the page for a machine
+          # that is already faulting. `for: 2m` still holds when the node
+          # reboots out from under the alert, because the 5m window keeps
+          # returning > 0 for a while after the logs themselves stop.
+          #
+          # `node` is absent on lines arriving via KmsgLogConfig, which accepts
+          # no extraTags; lines via machine.logging.destinations carry it. The
+          # annotation handles both cases rather than rendering a blank name.
+          - alert: TalosKernelFault
+            expr: |
+              sum by (node, service) (
+                count_over_time({job="talos"} |~ "Kernel panic - not syncing|BUG: unable to handle|Oops: |general protection fault|Fatal exception|Call Trace:"[5m])
+              ) > 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kernel fault on Talos node {{ if $labels.node }}{{ $labels.node }}{{ else }}(unidentified: kernel-log path carries no node tag){{ end }}"
+              description: "A Talos node logged a kernel panic, oops, BUG trace or fatal exception. It may have rebooted or be running degraded. Node: {{ if $labels.node }}{{ $labels.node }}{{ else }}unknown{{ end }}."
 ```
 
 - [ ] **Step 5: Add the PVC alert to `infrastructure/monitoring/kube-prometheus-stack/alertrules.yaml`**
