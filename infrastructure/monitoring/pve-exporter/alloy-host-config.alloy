@@ -1,0 +1,77 @@
+// Alloy config for the Proxmox VE hosts. Installed at
+// /etc/alloy/config.alloy on pve1 and pve2.
+//
+// WHY AN AGENT HERE BUT NOT ON TRUENAS: Proxmox is plain Debian with a
+// Grafana apt repo, and journald carries _SYSTEMD_UNIT / PRIORITY / _COMM,
+// which become queryable labels. TrueNAS cannot take an agent (no SSH by
+// design, and no exporter Custom App per the spec), so it forwards syslog
+// instead and accepts the flatter representation.
+
+loki.relabel "journal" {
+  // Rules-only component: this is consumed via .rules below, so forward_to
+  // is deliberately empty. That is the documented Alloy idiom, not an omission.
+  forward_to = []
+
+  // LABELS: bounded only. `unit` is bounded by the number of systemd units
+  // on a hypervisor — tens, not thousands. `host` is 2.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "host"
+  }
+  // PRIORITY is deliberately NOT a label. It is bounded at 8 values, but it
+  // multiplies every other label's stream count by up to 8 for no query
+  // benefit — LogQL filters it from the line just as well.
+}
+
+loki.source.journal "pve" {
+  forward_to    = [loki.process.drop_noise.receiver]
+  labels        = { job = "pve-journal" }
+  // Read only the last hour on first start. Without this, a fresh install
+  // replays the entire journal — on a hypervisor that has been up for
+  // months, that is a multi-gigabyte burst into a 50Gi Loki and will trip
+  // LokiStorageFillingUp before anything useful is collected.
+  max_age       = "1h"
+  relabel_rules = loki.relabel.journal.rules
+}
+
+// Drop the three noisiest units before they leave the host. pvestatd and
+// pve-firewall emit continuously at near-zero diagnostic value, and corosync
+// is chatty enough to dominate the stream on a healthy cluster.
+loki.process "drop_noise" {
+  forward_to = [loki.write.default.receiver]
+
+  // Drop the two units that emit continuously at near-zero diagnostic
+  // value. Matched here by label selector against `unit` (set above via
+  // relabel_rules), not by an extracted-map field — labels set by
+  // relabel_rules never land in the extracted map, only in stream labels.
+  stage.match {
+    selector            = `{unit=~"pvestatd.service|pve-firewall.service"}`
+    action              = "drop"
+    drop_counter_reason = "pve_noise"
+  }
+
+  // Only drop corosync lines that are NOT quorum-related. Its quorum and
+  // qdevice transitions are the fallback signal for PVEQuorumDegraded,
+  // which may have no metric-based detector at all, so they MUST survive.
+  // Go's RE2 engine has no negative lookahead, so this uses a LogQL `!~`
+  // line filter rather than `(?!...)` inside the selector.
+  stage.match {
+    selector            = `{unit="corosync.service"} !~ "(?i)(quorum|qdevice|votequorum)"`
+    action              = "drop"
+    drop_counter_reason = "corosync_noise"
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "https://loki-push.koutoulastha.dev/loki/api/v1/push"
+    basic_auth {
+      username      = "alloy"
+      password_file = "/etc/alloy/loki-password"
+    }
+  }
+}
