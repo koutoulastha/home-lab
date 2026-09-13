@@ -130,6 +130,7 @@ independently rather than through a single cluster endpoint.
 ## Layout
 
 ```
+README.md                    # NEW gotcha — see Documentation
 infrastructure/monitoring/
   truenas-exporter/
     application.yaml
@@ -377,6 +378,33 @@ recognised during an incident rather than discovered in it.
   between TrueNAS majors have historically been disruptive, and on this topology
   that risk now reaches Proxmox quorum, not just the exporter.
 
+## Documentation
+
+The quorum coupling is an **operational** constraint, not only a monitoring one.
+A spec nobody reads at 2am is the wrong home for it, so it also goes into the
+README's "Known gotchas" section, alongside the PodSecurity and ACME entries that
+exist for the same reason.
+
+Content to add, matching the existing entries' tone — the failure first, then what
+to do about it:
+
+> - **TrueNAS is a Proxmox quorum dependency.** The corosync QDevice runs as a
+>   container on TrueNAS, so TrueNAS is load-bearing for cluster quorum as well
+>   as for every PVC. Expected votes are 3 (two PVE nodes + the QDevice). Losing
+>   the QDevice alone leaves 2 of 3 — still quorate, still working, **no symptom
+>   at all** — while the cluster sits one node failure away from read-only: no VM
+>   starts, no migrations, no HA recovery. Consequences: never reboot or update
+>   TrueNAS while a Proxmox node is down or rebooting, and after any TrueNAS
+>   upgrade confirm the QDevice came back with `pvecm status` — an app-stack
+>   change that quietly fails to restart it leaves you degraded indefinitely.
+>   `PVEQuorumDegraded` catches this after 15 minutes. Note also that a TrueNAS
+>   outage degrades storage **and** quorum together: simultaneous storage and
+>   quorum alerts are one incident, not two.
+
+This is a **plan task in its own right**, not a docs tidy-up bundled into another
+step. It is the only artefact in this design that is useful while the monitoring
+itself is unavailable.
+
 ## Rollout
 
 Order matters; each step is verifiable before the next.
@@ -397,6 +425,9 @@ Order matters; each step is verifiable before the next.
 9. Measure 24h of log and series volume.
 10. Write alert rules, each validated against real history.
 11. Dashboards last.
+12. README gotcha (see Documentation). **Not gated on the rest** — the quorum
+    coupling is true today, independent of whether any of this is deployed, so
+    this task may land first if convenient.
 
 Every `application.yaml` needs its one-time `kubectl apply` — there is no
 app-of-apps, and committing the manifest deploys nothing.
