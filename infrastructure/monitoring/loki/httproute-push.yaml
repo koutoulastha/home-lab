@@ -1,0 +1,45 @@
+# No Certificate here: loki-push.koutoulastha.dev intersects the existing
+# wildcard listener on traefik-gateway (*.koutoulastha.dev, port 8443). See
+# infrastructure/networking/gateway/certificate.yaml for why this repo uses one
+# wildcard rather than per-host certs.
+#
+# Every field the API server would default is written out explicitly. This
+# Application syncs with ServerSideApply=true, which diffs against the live
+# object *including* server-applied defaults — omitting them leaves this
+# permanently OutOfSync with no error to explain it.
+#
+# The path match is deliberately narrow. This endpoint is LAN-reachable and
+# Loki has auth_enabled: false, so anything reachable here is effectively
+# unauthenticated at the Loki layer. Exposing only /loki/api/v1/push means a
+# leaked credential can write logs — it cannot read them, delete them, or
+# reach Loki's admin endpoints.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: loki-push
+  namespace: monitoring
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: traefik-gateway
+      namespace: default
+  hostnames:
+    - "loki-push.koutoulastha.dev"
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /loki/api/v1/push
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: loki-push-auth
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: loki
+          port: 3100
+          weight: 1

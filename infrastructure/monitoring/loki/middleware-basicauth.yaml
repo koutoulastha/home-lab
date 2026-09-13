@@ -1,0 +1,19 @@
+# Traefik Middleware, served by the kubernetesCRD provider. That provider is
+# active — `ingressRoute.dashboard.enabled: true` in the Traefik values creates
+# an IngressRoute CRD object and the dashboard routes, which it could not do
+# otherwise. Verified rather than assumed in Step 5 below.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: loki-push-auth
+  namespace: monitoring
+spec:
+  basicAuth:
+    # Key inside the secret must be `users`, in htpasswd format.
+    secret: loki-push-auth
+    realm: loki-push
+    # Do not forward the Authorization header to Loki. Loki has
+    # auth_enabled: false and would ignore it, but forwarding credentials
+    # past the point they are consumed is gratuitous — and Traefik's access
+    # log is JSON-captured into Loki for 30 days.
+    removeHeader: true
