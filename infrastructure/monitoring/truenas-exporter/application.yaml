@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: truenas-exporter
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    # Single git source: no upstream Helm chart exists for this exporter, so
+    # these are plain manifests. `values.yaml` is still excluded below so the
+    # exclude pattern stays identical to every other Application here.
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      path: infrastructure/monitoring/truenas-exporter
+      directory:
+        exclude: '{application.yaml,values.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Deliberately NO CreateNamespace=true and no managedNamespaceMetadata.
+      # The `monitoring` namespace is owned by the kube-prometheus-stack
+      # Application, which sets its PodSecurity labels. A second Application
+      # also managing that namespace would contend over its metadata.
+      - ServerSideApply=true
