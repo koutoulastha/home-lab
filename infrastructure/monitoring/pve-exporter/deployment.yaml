@@ -27,6 +27,20 @@ spec:
       labels:
         app.kubernetes.io/name: pve-exporter
     spec:
+      # The fields below this point that we'd normally never bother writing
+      # (dnsPolicy, restartPolicy, terminationGracePeriodSeconds,
+      # schedulerName, serviceAccountName, and per-container
+      # terminationMessagePath/Policy and the liveness probe's
+      # timeoutSeconds/successThreshold/failureThreshold/scheme) are spelled
+      # out explicitly because this Application syncs with
+      # ServerSideApply=true, which diffs against the live object including
+      # every server-applied default. Omitting them leaves the Application
+      # permanently OutOfSync with no error to explain why.
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      schedulerName: default-scheduler
+      serviceAccountName: default
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -39,6 +53,8 @@ spec:
           # before bumping.
           image: prompve/prometheus-pve-exporter:3.10.0
           imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           # The qdevice collector flag below is load-bearing, not cosmetic.
           # This cluster is 2 PVE nodes plus a corosync QDevice running as a
           # container on TrueNAS; expected votes are 3. If the QDevice alone
@@ -79,8 +95,12 @@ spec:
               # Bare / is the exporter's index page and needs no ?target=.
               path: /
               port: metrics
+              scheme: HTTP
             initialDelaySeconds: 15
             periodSeconds: 30
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
       volumes:
         - name: config
           secret:

@@ -44,6 +44,21 @@ spec:
       # No hostPath, no hostNetwork, no privileged anything. This runs cleanly
       # under the `baseline` PodSecurity level and does not rely on the
       # `privileged` label kube-prometheus-stack puts on this namespace.
+      #
+      # The fields below this point that we'd normally never bother writing
+      # (dnsPolicy, restartPolicy, terminationGracePeriodSeconds,
+      # schedulerName, serviceAccountName, and per-container
+      # terminationMessagePath/Policy and the liveness probe's
+      # timeoutSeconds/successThreshold/failureThreshold/scheme) are spelled
+      # out explicitly because this Application syncs with
+      # ServerSideApply=true, which diffs against the live object including
+      # every server-applied default. Omitting them leaves the Application
+      # permanently OutOfSync with no error to explain why.
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      schedulerName: default-scheduler
+      serviceAccountName: default
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -55,6 +70,8 @@ spec:
           # Step 1 tag lookup (see task brief for the lookup command).
           image: ghcr.io/unknowlars/truenas-scale-api-prometheus-exporter:6.0.0
           imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -151,8 +168,12 @@ spec:
             httpGet:
               path: /healthz
               port: metrics
+              scheme: HTTP
             initialDelaySeconds: 15
             periodSeconds: 30
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
           # NO readinessProbe on /healthz. Upstream is explicit that /healthz
           # confirms only that the process is serving HTTP and does NOT
           # guarantee the last scrape succeeded. Gating readiness on it would
