@@ -11,7 +11,8 @@ that currently only watches what runs *in* it:
 
 - **Proxmox VE 9.2.3**, 2 nodes plus a QDevice, hosting the Talos VMs.
 - **TrueNAS SCALE 25.10.7**, separate bare metal, backing every PVC through
-  democratic-csi.
+  democratic-csi — **and hosting the QDevice container**, which makes it
+  load-bearing for Proxmox quorum too. See "QDevice topology".
 
 Four outcomes, all four requested explicitly:
 
@@ -103,6 +104,10 @@ metrics, double the surface a TrueNAS upgrade can break, and buy nothing.
 
 If the API exporter later proves insufficient, adding it is a small follow-up.
 Starting with it is unearned complexity.
+
+Note this is **not** an argument about appliance purity — TrueNAS already runs a
+container here, the corosync QDevice. The argument is duplicate coverage, and it
+would stand even if the box ran a dozen apps.
 
 ### 4. Proxmox gets an agent, TrueNAS does not
 
@@ -233,6 +238,8 @@ constantly at low value. **Dropped at the agent**, not shipped and filtered late
 | `TrueNASExporterErrors` | critical | Exporter's own API-failure / collector-error counters |
 | `PVEQuorumLost` | critical | Cluster not quorate — **metric name unverified, see below** |
 | `PVENodeDown` | critical | `pve_up{id=~"node/.*"} == 0` |
+| `PVEQuorumDegraded` | warning | Total votes < expected votes — QDevice missing, `for: 15m` |
+| `TrueNASRebooted` | warning | `truenas_uptime` reset — a quorum event on this topology |
 | `TrueNASAlertWarning` | warning | Exporter `alerts` collector |
 | `TrueNASDiskTempHigh` | warning | Disk temperature |
 | `TrueNASVdevErrors` | warning | vdev error counters |
@@ -265,6 +272,22 @@ The cost is honest and accepted: **adding or renumbering a Talos node means
 editing this rule**, and forgetting to do so means a new node is not watched.
 That is a visible, greppable omission; a rule that cries wolf is not.
 
+### Why `PVEQuorumDegraded` is a warning, and why it waits 15 minutes
+
+**Warning, not critical**, because nothing is broken when it fires. The cluster is
+quorate and fully functional; it has merely lost its margin. Reserving critical
+(ntfy priority 5, bypasses Do Not Disturb) for states where something is actually
+down keeps that signal meaningful.
+
+**`for: 15m`** because a TrueNAS reboot legitimately removes the QDevice for a few
+minutes, and an alert that fires on every routine reboot is one you learn to
+dismiss. Fifteen minutes distinguishes "rebooting" from "the QDevice container did
+not come back".
+
+The failure this catches is specifically **not noticing that it never came back**
+— a container that silently fails to restart after a TrueNAS update leaves the
+cluster permanently one failure from read-only, with no other symptom.
+
 ### Verified metric names
 
 Confirmed against `pve_exporter/collector/cluster.py`: `pve_up{id}`,
@@ -272,12 +295,20 @@ Confirmed against `pve_exporter/collector/cluster.py`: `pve_up{id}`,
 `pve_memory_size_bytes{id}`, `pve_memory_usage_bytes{id}`,
 `pve_not_backed_up_total{id}`, `pve_not_backed_up_info{id}`.
 
-**Not confirmed: the quorum metric.** `ClusterCollector` reads `/cluster/status`
+**Not confirmed: the quorum metrics.** `ClusterCollector` reads `/cluster/status`
 and filters `type == 'cluster'`, which is where `quorate` lives, but the exported
 metric name could not be established from source. Since `PVEQuorumLost` is the
 headline Proxmox alert, **the implementation must verify it against a live
 `/metrics` scrape before writing the rule.** A config that parses proves nothing;
 check the consumer.
+
+`PVEQuorumDegraded` needs more than `quorate`: it needs **vote counts**, and
+`/cluster/status` is not guaranteed to expose expected-vs-total votes through this
+exporter at all. Verify during rollout step 4. **If the exporter cannot supply
+vote counts, this alert falls back to a Loki rule** matching corosync's
+`quorum/qdevice` transitions in the PVE journal, which the Alloy agent is already
+shipping. Do not silently drop the alert — the state it covers is invisible by
+construction, so losing it would leave no other signal.
 
 ### Every Loki rule is measured before deployment
 
@@ -301,16 +332,50 @@ The single knob most likely to surprise: the TrueNAS exporter's
 count. **democratic-csi creates a dataset or zvol per PVC**, so this grows with
 cluster workloads rather than staying fixed. Measure before leaving it enabled.
 
-## Assumption on record
+## QDevice topology — TrueNAS is a quorum dependency
 
-**The QDevice is assumed to run on a standalone host outside both Proxmox nodes.**
-This was asked twice during design and not answered.
+**The QDevice runs as a container on TrueNAS.** Not on either Proxmox node, and
+not on a standalone host.
 
-If it in fact runs as a guest on either node, quorum is **circular** — the
-tiebreaker dies with the thing it is meant to arbitrate — and `PVEQuorumLost`
-would be structurally unable to fire in precisely the scenario it exists for.
-Verify during implementation. If the assumption is wrong, that circularity
-warrants its own alert and a note in the README.
+### What this is not
+
+It is **not** the circular dependency worth fearing. TrueNAS is independent bare
+metal, so the tiebreaker does not die with the thing it arbitrates. If a Proxmox
+node fails, the QDevice is unaffected and casts its vote. `PVEQuorumLost` works
+as intended.
+
+### What it is
+
+**TrueNAS is now load-bearing for Proxmox quorum as well as for storage.** That
+produces one dangerous state and one correlated failure:
+
+**Silent quorum degradation.** Expected votes are 3 — two nodes plus the QDevice.
+Lose the QDevice alone and 2 of 3 votes remain, which is still quorate. The
+cluster keeps working and **presents no symptom at all**. But the cluster is now
+one node failure from read-only: no VM starts, no migrations, no HA recovery.
+A routine TrueNAS reboot puts you there, and nothing currently tells you when it
+ends — or whether it ended.
+
+This is precisely the degradation class the whole design exists to catch, and it
+is invisible to `PVEQuorumLost`, which only fires once quorum is already gone.
+It therefore gets its own alert.
+
+**Correlated failure.** A TrueNAS outage degrades storage *and* quorum
+simultaneously. Alerts will arrive from both subsystems at once and will look
+like two incidents. They are one. This is recorded here so the correlation is
+recognised during an incident rather than discovered in it.
+
+### Consequences for this design
+
+- `PVEQuorumDegraded` is added to the alert table (below).
+- `TrueNASRebooted` is added — on this topology a TrueNAS reboot is a Proxmox
+  quorum event, not only a storage event.
+- **TrueNAS maintenance now requires both Proxmox nodes healthy.** Updating
+  TrueNAS while a node is down or being rebooted costs quorum. This belongs in
+  the README as a runbook note, not only in this spec.
+- The TrueNAS major-upgrade revisit trigger gains weight: app-stack changes
+  between TrueNAS majors have historically been disruptive, and on this topology
+  that risk now reaches Proxmox quorum, not just the exporter.
 
 ## Rollout
 
@@ -319,7 +384,9 @@ Order matters; each step is verifiable before the next.
 1. TrueNAS: create a **read-only** API key. Seal it. Deploy `truenas-exporter`.
 2. Verify metrics, then tune cardinality knobs before adding rules.
 3. Proxmox: create an API token with `PVEAuditor`. Seal it. Deploy `pve-exporter`.
-4. Verify both node targets scrape. **Establish the quorum metric name here.**
+4. Verify both node targets scrape. **Establish the quorum metric name here, and
+   whether expected-vs-total vote counts are exposed at all** — if not,
+   `PVEQuorumDegraded` becomes a Loki rule instead (see Alerting).
 5. Install `node_exporter` debs on both PVE hosts; add `nodes-service.yaml` and
    `nodes-servicemonitor.yaml` to the already-registered `pve-exporter` path.
 6. Add the Loki push HTTPRoute, middleware and htpasswd — these land in the
@@ -352,12 +419,18 @@ question.
 | Proxmox logs stop after a host reboot | Alloy deb installed but its unit never enabled |
 | Loki push returns 401 from PVE only | Basic-auth sealed secret rotated without updating host-side Alloy config |
 | Quorum alert never fires despite node loss | Rule written against an unverified metric name |
+| Proxmox goes read-only after losing exactly one node | QDevice container on TrueNAS never came back from an earlier reboot or update; cluster had been running on 2 of 3 votes with no symptom. This is what `PVEQuorumDegraded` exists to prevent |
+| Storage and quorum alerts fire together | One incident, not two — TrueNAS hosts both the PVC backend and the QDevice |
+| `PVEQuorumDegraded` flaps on every TrueNAS reboot | `for:` too short — 15m is the floor, raise it if TrueNAS boots slowly |
 | Storage alerts silently stop | Exporter died or its API calls are failing — this is what `TrueNASExporterDown` and `TrueNASExporterErrors` exist to catch |
 | New Application stuck `OutOfSync` with no visible diff | `ServerSideApply=true` changes how ArgoCD diffs; server-defaulted fields must be spelled out |
 
 ## Revisit triggers
 
-- **TrueNAS major upgrade** — re-evaluate the exporter (decision 2).
+- **TrueNAS major upgrade** — re-evaluate the exporter (decision 2), and confirm
+  the QDevice container survived. App-stack changes between TrueNAS majors have
+  historically been disruptive, and on this topology that reaches Proxmox quorum.
+  Check `PVEQuorumDegraded` is clear after every TrueNAS upgrade.
 - **The exporter goes unmaintained** — the fallback is SNMP, which TrueNAS
   supports natively and which survives upgrades, at the cost of coarser metrics
   and a generated `snmp_exporter` module for FREENAS-MIB.
