@@ -1,0 +1,88 @@
+# Polls the Proxmox VE API for cluster health, guest state, storage and backup
+# coverage. Runs OFF the hypervisor by design — upstream recommends exactly
+# this, and deliberately avoids exporting anything node_exporter already
+# covers, which is why the PVE hosts also run node_exporter (see
+# nodes-service.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pve-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pve-exporter
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pve-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pve-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          # Pinned, like every other image and chart in this repo. Check
+          # https://github.com/prometheus-pve/prometheus-pve-exporter/releases
+          # before bumping.
+          image: prompve/prometheus-pve-exporter:3.10.0
+          imagePullPolicy: IfNotPresent
+          # The qdevice collector flag below is load-bearing, not cosmetic.
+          # This cluster is 2 PVE nodes plus a corosync QDevice running as a
+          # container on TrueNAS; expected votes are 3. If the QDevice alone
+          # disappears, 2 of 3 votes remain — the cluster stays quorate, keeps
+          # working, and shows NO symptom whatsoever while sitting one node
+          # failure away from read-only. PVEQuorumDegraded exists solely to
+          # catch that state, and it can only fire if this collector is on.
+          # Several pve_exporter collectors default off; relying on an
+          # unverified default here would silently disable the one alert with
+          # no other detector, so it is enabled explicitly below.
+          args:
+            - --collector.qdevice
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: metrics
+              containerPort: 9221
+              protocol: TCP
+          env:
+            - name: PVE_CONFIG_FILE
+              value: /etc/pve-exporter/pve.yml
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pve-exporter
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          livenessProbe:
+            httpGet:
+              # Bare / is the exporter's index page and needs no ?target=.
+              path: /
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 30
+      volumes:
+        - name: config
+          secret:
+            secretName: pve-exporter
+            defaultMode: 292

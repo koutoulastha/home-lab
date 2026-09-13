@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pve-exporter
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      path: infrastructure/monitoring/pve-exporter
+      directory:
+        exclude: '{application.yaml,values.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Deliberately NO CreateNamespace=true and no managedNamespaceMetadata —
+      # kube-prometheus-stack owns the `monitoring` namespace's metadata.
+      - ServerSideApply=true
