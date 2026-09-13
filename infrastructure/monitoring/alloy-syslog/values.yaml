@@ -1,0 +1,112 @@
+# grafana/alloy 1.12.1 (Alloy v1.19.2). TrueNAS syslog receiver only.
+#
+# WHY A SEPARATE APPLICATION: this is a network listener with a
+# LoadBalancer Service, not a per-node collector. The `alloy` DaemonSet
+# would open this port on every node; a Helm release is one controller
+# type, so a singleton receiver has to be its own release. Same reasoning
+# that made alloy-events separate.
+#
+# DO NOT SCALE ABOVE ONE REPLICA. A second replica would receive an
+# arbitrary half of the syslog stream depending on LB hashing, and
+# TrueNASLogIngestionStopped would then be measuring one of two receivers.
+
+controller:
+  type: deployment
+  replicas: 1
+
+# No node_exporter-style host access needed: this reads a socket, not the host.
+rbac:
+  create: false
+
+service:
+  # The one new LAN-facing L4 endpoint in this design. Syslog is not HTTP and
+  # therefore cannot go through Traefik like the Loki push path does.
+  type: LoadBalancer
+  # Cilium LB-IPAM assigns from the 192.168.20.240-250 pool. Pinned rather
+  # than dynamic because TrueNAS is configured with a DNS name that resolves
+  # here, and a reassignment on reschedule would silently stop ingestion.
+  annotations:
+    io.cilium/lb-ipam-ips: "192.168.20.242"
+
+alloy:
+  mounts:
+    varlog: false
+    extra:
+      - name: syslog-tls
+        mountPath: /etc/alloy/tls
+        readOnly: true
+
+  extraPorts:
+    - name: syslog-tls
+      port: 6514
+      targetPort: 6514
+      protocol: TCP
+
+  extraEnv:
+    - name: SYSLOG_TLS_DIR
+      value: /etc/alloy/tls
+
+  extraVolumes:
+    - name: syslog-tls
+      secret:
+        secretName: syslog-tls
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  configMap:
+    content: |
+      // RFC5424 syslog over TLS. Port 6514, not plaintext 514: this crosses
+      // the LAN and carries the storage box's auth and audit lines.
+      loki.source.syslog "truenas" {
+        listener {
+          address               = "0.0.0.0:6514"
+          protocol              = "tcp"
+          syslog_format         = "rfc5424"
+          labels                = { job = "truenas-syslog" }
+          use_incoming_timestamp = true
+
+          tls_config {
+            cert_file = "/etc/alloy/tls/tls.crt"
+            key_file  = "/etc/alloy/tls/tls.key"
+          }
+        }
+        forward_to = [loki.process.truenas.receiver]
+      }
+
+      loki.process "truenas" {
+        // LABELS: bounded only. facility and severity are fixed small sets;
+        // hostname is 1. Everything else — appname, procid, msgid — stays in
+        // the line where LogQL can still filter it.
+        //
+        // This is the Phase 2 lesson applied in advance: the `filename` label
+        // blowout and the stage.label_drop correction both came from
+        // promoting an unbounded value.
+        stage.labels {
+          values = {
+            host     = "__syslog_message_hostname",
+            facility = "__syslog_message_facility",
+            severity = "__syslog_message_severity",
+          }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          // In-cluster, so no auth and no Traefik hop — unlike the PVE hosts,
+          // this receiver is already inside the cluster.
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+crds:
+  create: false
+
+serviceMonitor:
+  enabled: true
