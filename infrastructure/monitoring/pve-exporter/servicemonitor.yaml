@@ -1,0 +1,60 @@
+# MULTI-TARGET, not one pod per node. One exporter, scraped once per PVE node
+# via ?target=, exactly how blackbox-exporter already works in this repo.
+#
+# WHY this matters with two nodes: the API endpoint being polled can itself be
+# the dead one. Pointing a single scrape at "the cluster API" would mean a node
+# failure could take the scrape down with it, producing an outage in the
+# monitoring at the moment the monitoring is needed.
+#
+# Each endpoint yields a separate Prometheus target. `?target=` uses the LAN
+# IP of each node rather than its FQDN: node 1's FQDN resolves fine, but node
+# 2's FQDN is a placeholder that resolves nowhere, so IPs are used for both to
+# keep the two endpoints consistent. `instance` is therefore set via an
+# explicit `replacement` to a literal node name rather than being promoted
+# from __param_target — promoting the IP would leave alert annotations
+# rendering an address instead of a name.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pve-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pve-exporter
+  namespaceSelector:
+    matchNames:
+      - monitoring
+  endpoints:
+    - port: metrics
+      path: /pve
+      interval: 60s
+      scrapeTimeout: 30s
+      scheme: http
+      params:
+        target:
+          - "192.168.20.4"
+        cluster:
+          - "1"
+        node:
+          - "1"
+      relabelings:
+        - targetLabel: instance
+          replacement: m8
+          action: replace
+    - port: metrics
+      path: /pve
+      interval: 60s
+      scrapeTimeout: 30s
+      scheme: http
+      params:
+        target:
+          - "192.168.20.5"
+        cluster:
+          - "1"
+        node:
+          - "1"
+      relabelings:
+        - targetLabel: instance
+          replacement: pve2
+          action: replace

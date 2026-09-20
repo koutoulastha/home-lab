@@ -1,0 +1,49 @@
+# Selector-less Service: nothing in the cluster backs this. The EndpointSlice
+# below supplies the addresses by hand. Kubernetes will not manage these
+# endpoints — that is the point — so an IP change here is a git change.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pve-nodes
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pve-nodes
+spec:
+  type: ClusterIP
+  clusterIP: None
+  sessionAffinity: None
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: node-metrics
+      protocol: TCP
+      port: 9100
+      targetPort: 9100
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: pve-nodes
+  namespace: monitoring
+  labels:
+    # This label is what binds the slice to the Service. Without it the
+    # Service has no endpoints and the ServiceMonitor silently scrapes
+    # nothing — no error, just an empty target list.
+    kubernetes.io/service-name: pve-nodes
+addressType: IPv4
+ports:
+  - name: node-metrics
+    protocol: TCP
+    port: 9100
+endpoints:
+  - addresses:
+      - "192.168.20.4"
+    conditions:
+      ready: true
+    hostname: m8
+  - addresses:
+      - "192.168.20.5"
+    conditions:
+      ready: true
+    hostname: pve2

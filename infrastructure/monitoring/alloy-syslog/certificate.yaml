@@ -1,0 +1,29 @@
+# A per-host certificate, which this repo otherwise avoids — the gateway uses
+# one wildcard. The exception is justified and bounded:
+#
+# The wildcard cert's Secret lives in the `default` namespace and is consumed
+# by the Gateway listener. Alloy's syslog listener is a raw TLS socket in the
+# `monitoring` namespace and cannot reference a Secret across namespaces.
+#
+# The CNAME-hijack hazard documented in gateway/certificate.yaml does NOT
+# apply here: that failure comes from a Pangolin ACME delegation on a hostname
+# put behind the tunnel. syslog.koutoulastha.dev is LAN-only, is never behind
+# Pangolin, and carries no _acme-challenge delegation — so DNS-01 validates
+# against its own TXT record normally.
+#
+# REQUIRES a LAN DNS A record: syslog.koutoulastha.dev -> the LoadBalancer IP
+# assigned in values.yaml. TrueNAS must connect by hostname, not IP: Let's
+# Encrypt cannot issue certificates for private IP addresses, so an IP target
+# would fail TLS verification.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: syslog-tls
+  namespace: monitoring
+spec:
+  secretName: syslog-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "syslog.koutoulastha.dev"

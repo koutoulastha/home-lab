@@ -1,0 +1,186 @@
+# Polls the TrueNAS JSON-RPC WebSocket API. This is the transport for TrueNAS's
+# OWN alert engine, not a reimplementation of it: TrueNAS decides "pool
+# degraded" / "SMART failing" / "scrub found errors", and this carries that
+# verdict into Prometheus so Alertmanager can deliver it through the existing
+# ntfy route.
+#
+# WHY NOT TrueNAS's built-in Alert Services: 25.10 offers Slack, Mattermost,
+# OpsGenie, PagerDuty, SNMP Trap, Telegram, VictorOps and AWS SNS. Generic
+# webhooks and ntfy are roadmap requests, not shipped. The community answer is
+# a container that mocks a Slack webhook and re-emits to ntfy — rejected
+# because a dead shim is indistinguishable from "nothing is wrong". Routing
+# through Prometheus makes a broken transport fire as `up == 0` instead.
+#
+# This exporter is a RECORDED RISK, not an oversight: single-maintainer, its
+# README states it was "built mostly by AI over a few weeks", and it is
+# "maintained against TrueNAS SCALE 25.10.2" (we run 25.10.7 — same minor).
+# Accepted only because its death is loud. See TrueNASExporterDown and
+# TrueNASExporterErrors in alertrules.yaml — those are the mitigation, not
+# boilerplate. Re-evaluate at every TrueNAS major upgrade.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truenas-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: truenas-exporter
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: truenas-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: truenas-exporter
+    spec:
+      # No hostPath, no hostNetwork, no privileged anything. This runs cleanly
+      # under the `baseline` PodSecurity level and does not rely on the
+      # `privileged` label kube-prometheus-stack puts on this namespace.
+      #
+      # The fields below this point that we'd normally never bother writing
+      # (dnsPolicy, restartPolicy, terminationGracePeriodSeconds,
+      # schedulerName, serviceAccountName, and per-container
+      # terminationMessagePath/Policy and the liveness probe's
+      # timeoutSeconds/successThreshold/failureThreshold/scheme) are spelled
+      # out explicitly because this Application syncs with
+      # ServerSideApply=true, which diffs against the live object including
+      # every server-applied default. Omitting them leaves the Application
+      # permanently OutOfSync with no error to explain why.
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      schedulerName: default-scheduler
+      serviceAccountName: default
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          # Highest semantic version published to this registry as of the
+          # Step 1 tag lookup (see task brief for the lookup command).
+          image: ghcr.io/unknowlars/truenas-scale-api-prometheus-exporter:6.0.0
+          imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: metrics
+              containerPort: 9108
+              protocol: TCP
+          env:
+            # `/api/current` is the JSON-RPC WebSocket endpoint. The REST v2.0
+            # path will connect and then yield no metrics at all — a failure
+            # that looks like a permissions problem and is not.
+            #
+            # Addressed by IP (192.168.20.2), not by the `truenas` hostname:
+            # cluster DNS does not serve the bare hostname, and LAN DNS serves
+            # only *.koutoulastha.dev. See TRUENAS_VERIFY_TLS below for why
+            # that also forces TLS verification off, and the upgrade path
+            # back to a hostname + verified TLS.
+            - name: TRUENAS_WS_URL
+              value: "wss://192.168.20.2/api/current"
+            - name: TRUENAS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: truenas-exporter
+                  key: api-key
+            # Set to "false" against upstream's "keep true in production"
+            # advice. Reasoning, so a future reader does not mistake this for
+            # a careless weakening:
+            #   - The only reachable identifier is an IP address (see
+            #     TRUENAS_WS_URL above), and an IP endpoint cannot validate
+            #     against a hostname certificate.
+            #   - TrueNAS SCALE ships a self-signed certificate by default,
+            #     which no cluster trust store contains.
+            #   - Decisively: this same host already serves every cluster PVC
+            #     over iSCSI and NFS in clear text (see
+            #     project-persistent-storage). Requiring verified TLS on the
+            #     metrics path while bulk-transferring all persistent data
+            #     unencrypted to the same box on the same LAN would be
+            #     security theatre.
+            #   - The residual risk is bounded: the API key behind this
+            #     connection is READ-ONLY.
+            # Upgrade path: issue a certificate for truenas.koutoulastha.dev
+            # from the existing letsencrypt-prod ClusterIssuer, import it to
+            # TrueNAS, add the LAN DNS A record, then switch TRUENAS_WS_URL to
+            # the hostname and flip this back to "true".
+            - name: TRUENAS_VERIFY_TLS
+              value: "false"
+            - name: EXPORTER_PORT
+              value: "9108"
+            - name: SCRAPE_INTERVAL_SECONDS
+              value: "60"
+            - name: LOG_LEVEL
+              value: "INFO"
+            # Cardinality controls. Task 3 measures and may change these; the
+            # defaults below are the exporter's own conservative ones, restated
+            # explicitly so a future upstream default change cannot move them.
+            - name: ENABLE_GENERIC_METHOD_METRICS
+              value: "false"
+            - name: ENABLE_GENERIC_EVENT_METRICS
+              value: "false"
+            - name: AUTO_DISCOVER_METHODS
+              value: "false"
+            - name: SCRAPE_ALL_METRICS
+              value: "false"
+            - name: ENABLE_FILESYSTEM_LISTDIR
+              value: "false"
+            - name: DATASET_SNAPSHOT_FALLBACK_LIMIT
+              value: "0"
+            # ENABLE_DATASET_METRICS is deliberately left at the upstream
+            # default of true for the first rollout so Task 3 can MEASURE its
+            # cost. democratic-csi creates a dataset or zvol per PVC, so this
+            # grows with cluster workloads rather than staying fixed.
+            - name: ENABLE_DATASET_METRICS
+              value: "true"
+            - name: ENABLE_TASK_METRICS
+              value: "true"
+          volumeMounts:
+            # The container's root filesystem above is read-only, and this is a
+            # Python application: it writes bytecode caches and temporary files
+            # at runtime, so without a writable /tmp it crash-loops, and the
+            # failure looks like an image or credentials problem rather than a
+            # filesystem one. Do not remove this as dead weight.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          # NO readinessProbe on /healthz. Upstream is explicit that /healthz
+          # confirms only that the process is serving HTTP and does NOT
+          # guarantee the last scrape succeeded. Gating readiness on it would
+          # keep the pod Ready while its API calls fail — the staleness this
+          # design depends on detecting. TrueNASExporterErrors covers that
+          # instead, from the exporter's own error counters.
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 8Mi
