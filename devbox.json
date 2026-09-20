@@ -14,7 +14,8 @@
     "cilium-cli@latest",
     "opentofu@latest",
     "kubelogin-oidc@latest",
-    "kubeseal@latest"
+    "kubeseal@latest",
+    "mkpasswd@latest"
   ],
   "shell": {
     "init_hook": [
