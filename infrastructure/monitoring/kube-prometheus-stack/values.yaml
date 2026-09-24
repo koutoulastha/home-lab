@@ -46,6 +46,12 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
     probeSelectorNilUsesHelmValues: false
+    # ScrapeConfig is how the PVE hosts' node_exporter is scraped. The first
+    # attempt used a selectorless Service plus a hand-written EndpointSlice;
+    # ArgoCD's stock resource.exclusions drops discovery.k8s.io/EndpointSlice
+    # cluster-wide, so the slice was never applied while the Service and
+    # ServiceMonitor both reported Synced — no targets, no error.
+    scrapeConfigSelectorNilUsesHelmValues: false
 
     retention: 90d
     # retentionSize is the backstop and is not optional. Time-based retention

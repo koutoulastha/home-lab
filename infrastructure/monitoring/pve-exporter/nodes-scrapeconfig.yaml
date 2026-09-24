@@ -1,0 +1,58 @@
+# node_exporter on the two Proxmox hypervisors.
+#
+# These are the hosts the cluster RUNS ON, so they cannot be discovered by any
+# Kubernetes mechanism — there is no Pod, no Service and no Node object behind
+# them. They are two fixed LAN addresses.
+#
+# WHY ScrapeConfig AND NOT A SERVICE + ENDPOINTSLICE: the original design used
+# a selectorless headless Service with a hand-written EndpointSlice, which is
+# the documented way to point a ServiceMonitor at external addresses. It does
+# not work here. ArgoCD ships this in its default resource.exclusions:
+#
+#     - apiGroups: ['', discovery.k8s.io]
+#       kinds: [Endpoints, EndpointSlice]
+#
+# so ArgoCD never watches or applies EndpointSlice at all. The Service and the
+# ServiceMonitor both reported Synced while the slice that gives them targets
+# silently did not exist — the failure surfaced only as an absent scrape
+# target. Exclusions are per-kind and cluster-wide, so there is no way to carve
+# out this one slice without making ArgoCD watch every EndpointSlice in a
+# Cilium cluster. ScrapeConfig removes the need for one.
+#
+# IP ADDRESSES, NOT FQDNs: m8 resolves fine (m8.koutoulastha.dev) but pve2's
+# FQDN is pve2.example.com — an RFC-2606 reserved domain that resolves nowhere.
+# Using one good FQDN and one broken one would half-work; both are IPs so the
+# failure mode is uniform. An IP change requires a git change, which is the
+# same cost the EndpointSlice carried.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: pve-nodes
+  namespace: monitoring
+spec:
+  # jobName sets the `job` LABEL. The operator always controls the underlying
+  # job_name itself (to guarantee uniqueness) and applies this via a generated
+  # relabeling, so `job="pve-nodes"` is what the alert rules select on.
+  jobName: pve-nodes
+
+  # One staticConfig per host so `instance` is a label on the target rather
+  # than a regex over __address__. Static-config labels are applied before
+  # Prometheus would derive `instance` from __address__, so these win and the
+  # alert annotations read "m8" / "pve2" instead of an IP:port.
+  staticConfigs:
+    - targets:
+        - "192.168.20.4:9100"
+      labels:
+        instance: m8
+    - targets:
+        - "192.168.20.5:9100"
+      labels:
+        instance: pve2
+
+  metricsPath: /metrics
+  scheme: HTTP
+  # Matches the interval the replaced ServiceMonitor used. node_exporter is
+  # cheap and these are host-level signals (load, filesystem, hwmon temps),
+  # where 30s is the difference between catching a thermal event and not.
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
