@@ -87,6 +87,13 @@ spec:
             - name: config
               mountPath: /etc/pve-exporter
               readOnly: true
+            # Writable /tmp under readOnlyRootFilesystem. The exporter serves
+            # through gunicorn, whose workers each create a heartbeat file with
+            # tempfile.mkstemp() at startup; with no writable temp dir every
+            # worker dies on "No usable temporary directory found" and the pod
+            # crash-loops. Same fix as truenas-exporter's /tmp emptyDir.
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 25m
@@ -109,3 +116,6 @@ spec:
           secret:
             secretName: pve-exporter
             defaultMode: 292
+        - name: tmp
+          emptyDir:
+            sizeLimit: 8Mi
