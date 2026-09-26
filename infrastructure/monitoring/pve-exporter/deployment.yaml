@@ -67,6 +67,12 @@ spec:
           # no other detector, so it is enabled explicitly below.
           args:
             - --collector.qdevice
+            # The exporter locates its config ONLY via this flag (default
+            # /etc/prometheus/pve.yml). It reads no PVE_CONFIG_FILE variable —
+            # an earlier version of this file set one, the exporter ignored it,
+            # looked at the default path, and crash-looped on FileNotFoundError.
+            # Checked against pve_exporter/cli.py at v3.10.0.
+            - --config.file=/etc/pve-exporter/pve.yml
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -77,9 +83,6 @@ spec:
             - name: metrics
               containerPort: 9221
               protocol: TCP
-          env:
-            - name: PVE_CONFIG_FILE
-              value: /etc/pve-exporter/pve.yml
           volumeMounts:
             - name: config
               mountPath: /etc/pve-exporter
