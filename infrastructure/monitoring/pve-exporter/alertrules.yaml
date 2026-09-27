@@ -1,0 +1,213 @@
+# Proxmox VE alerting: cluster state from pve-exporter, host state from
+# node_exporter on the two hypervisors.
+#
+# `severity` must stay within {critical, warning} — Alertmanager's routes
+# match exactly those and anything else is delivered nowhere, silently.
+#
+# DUPLICATE SERIES: pve-exporter is scraped once per node, both with
+# cluster=1, so every cluster-wide series arrives twice (instance=m8 and
+# instance=pve2). That is deliberate — if the node that dies is the only one
+# reporting cluster state, quorum metrics vanish at exactly the moment they
+# matter. Rules below therefore aggregate `by (id)` wherever the per-node view
+# adds nothing. The one exception is PVEQuorumDegraded, where WHICH node lost
+# its QDevice connection is the useful part.
+#
+# Every metric and label used here was read off a live scrape of
+# prometheus-pve-exporter 3.10.0 against this cluster on 2026-09-28, not
+# assumed from documentation.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pve
+  namespace: monitoring
+spec:
+  groups:
+    - name: pve.rules
+      rules:
+        # There is no quorate gauge: the exporter publishes quorum as a LABEL,
+        # pve_cluster_info{quorate="1"}. When quorum is lost the label value
+        # changes and the quorate="1" series goes stale on the next scrape.
+        #
+        # "Cluster info is reported, UNLESS some node reports it quorate."
+        # Both sides are label-free counts, so the alert carries no labels
+        # from the selector. (absent() was tried first and rejected: it copies
+        # its equality matchers into the result, so "quorum lost" would have
+        # arrived labelled quorate="1".)
+        #
+        # Requiring count(pve_cluster_info) > 0 keeps this silent when the
+        # exporter itself is down — "no data" must not page as "quorum lost",
+        # which would send you to the wrong system.
+        #
+        # One node reporting quorate is enough to stay silent: an isolated node
+        # sees itself as non-quorate while the majority partition (other node +
+        # QDevice) is fine. That case is PVENodeDown's, not this rule's.
+        - alert: PVEQuorumLost
+          expr: |
+            (count(pve_cluster_info) > 0)
+              unless on() (count(pve_cluster_info{quorate="1"}) > 0)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Proxmox cluster has lost quorum"
+            description: >-
+              No node reports the cluster as quorate: no VM starts, no
+              migrations, no HA recovery, and /etc/pve is read-only. With 2
+              nodes plus a QDevice this means at least two of the three votes
+              are gone. The QDevice runs as a container on TrueNAS — check
+              that TrueNAS is up as well as both nodes.
+
+        # THE SILENT ONE. Expected votes are 3 (two nodes + the QDevice on
+        # TrueNAS). Losing the QDevice alone leaves 2 of 3 — still quorate,
+        # still fully working, and presenting NO symptom — while the cluster
+        # sits one node failure away from read-only.
+        #
+        # pve_qdevice_up is the exporter's QDeviceCollector: each node's OWN
+        # view of its qnetd connection, which is why this rule does not
+        # aggregate — the instance label says which node lost it. If the
+        # QDevice container dies both nodes fire; group_by [alertname,
+        # namespace] folds them into one notification.
+        #
+        # The absent() branch covers the collector disappearing — an exporter
+        # upgrade that renames the metric, or the --collector.qdevice flag
+        # being dropped — while the exporter otherwise works. Without it this
+        # rule would fail exactly the way it exists to detect: silently.
+        #
+        # WARNING, not critical: nothing is broken when this fires. for: 15m
+        # because a TrueNAS reboot legitimately removes the QDevice for a few
+        # minutes; 15m separates "rebooting" from "the container did not come
+        # back after a TrueNAS update".
+        - alert: PVEQuorumDegraded
+          expr: |
+            pve_qdevice_up == 0
+              or
+            (absent(pve_qdevice_up) and on() (count(pve_cluster_info) > 0))
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxmox QDevice vote lost{{ with $labels.instance }} (seen from {{ . }}){{ end }}"
+            description: >-
+              The cluster is quorate but a node has lost its QDevice vote,
+              almost certainly the QDevice container on TrueNAS
+              (qnetd 192.168.20.100:5403). Nothing is broken yet; the cluster
+              is one node failure from read-only. Confirm with `pvecm status`.
+              If there is no instance in the summary, the pve_qdevice_up
+              metric itself has disappeared — check the exporter's
+              --collector.qdevice flag.
+
+        # max by (id): a node that is down cannot report on itself, so its
+        # state comes from the survivor. Aggregating means "no reporter sees it
+        # up", and yields one alert per node instead of one per reporter.
+        - alert: PVENodeDown
+          expr: |
+            max by (id) (pve_up{id=~"node/.*"}) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Proxmox {{ $labels.id }} is down"
+            description: >-
+              A hypervisor is offline and its Talos VMs are down with it. With
+              only two nodes, quorum now rests entirely on the QDevice
+              container on TrueNAS. The sole Talos control plane runs on pve2,
+              so if this is pve2 the Kubernetes API is down too.
+
+        # Talos VMs are selected by the tag Omni's Proxmox provider stamps on
+        # every VM it creates (machine-request.<machineset>), NOT by VMID.
+        # Omni replaces machines by creating new VMs, so VMIDs are not stable;
+        # a hard-coded VMID list would silently stop covering a replaced node.
+        # The tag also excludes the non-Talos guests without naming them:
+        # ubuntu1 (100) and the deliberately stopped template (999), which
+        # would otherwise page forever.
+        #
+        # Not inferred from changes(): that would fire on every deliberate
+        # shutdown and migration. A VM Omni deletes drops out of the series
+        # entirely, so scale-down does not fire either.
+        - alert: PVEGuestUnexpectedlyStopped
+          expr: |
+            max by (id) (pve_up{id=~"qemu/.*"})
+              * on (id) group_left (name, tags)
+                max by (id, name, tags) (pve_guest_info{tags=~".*machine-request\\..*", template="0"})
+            == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Talos VM {{ $labels.name }} ({{ $labels.id }}) is not running"
+            description: >-
+              An Omni-managed Talos VM is stopped. If this was not deliberate,
+              check whether the host OOM-killed it or HA fenced it. Kubernetes
+              reschedules workloads, so cluster alerts may stay quiet. If the
+              tags include main-control-planes this is the ONLY control plane
+              and KubeAPIDown will be firing as well — this alert is the why.
+
+        # PVEGuestNotBackedUp from the plan is deliberately NOT here. On
+        # 2026-09-28 pve_not_backed_up_info flagged all 7 guests: no guest is
+        # in any backup job. Shipping the rule would open with 7 permanently
+        # firing alerts — the PostgresBackupStale failure mode. Whether to
+        # back up the non-Talos guests (Omni-managed Talos VMs are rebuilt,
+        # not restored) is an open decision; the rule follows that decision.
+
+        - alert: PVEStorageFillingUp
+          expr: |
+            max by (id) (
+              pve_disk_usage_bytes{id=~"storage/.*"}
+                / pve_disk_size_bytes{id=~"storage/.*"}
+            ) > 0.85
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxmox {{ $labels.id }} is {{ $value | humanizePercentage }} full"
+            description: >-
+              A full Proxmox storage stops VM creation, snapshots and backups,
+              and a full local-lvm thin pool can corrupt running VM disks.
+              This is hypervisor-side storage, distinct from the TrueNAS pools
+              backing cluster PVCs.
+
+        # ---- Host-level, from node_exporter on the hypervisors ----
+
+        # fuse.* excludes /etc/pve (pmxcfs, a small FUSE filesystem whose
+        # usage ratio says nothing about disk space) and lxcfs.
+        - alert: PVEHostFilesystemFilling
+          expr: |
+            node_filesystem_avail_bytes{job="pve-nodes", fstype!~"tmpfs|fuse.*|squashfs|overlay"}
+              / node_filesystem_size_bytes{job="pve-nodes", fstype!~"tmpfs|fuse.*|squashfs|overlay"} < 0.15
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.instance }}:{{ $labels.mountpoint }} is low on space"
+            description: >-
+              Under 15% free. On a Proxmox host a full root filesystem stops
+              pmxcfs and takes the node out of the cluster.
+
+        - alert: PVEHostTempHigh
+          expr: |
+            node_hwmon_temp_celsius{job="pve-nodes"} > 85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.instance }} sensor {{ $labels.chip }}/{{ $labels.sensor }} at {{ $value }}°C"
+            description: >-
+              Sustained high temperature. Thermal throttling degrades every VM
+              on the host, and presents in the cluster as latency rather than
+              as failure — which is why it needs its own alert.
+
+        # A hypervisor that reboots without anyone doing it is either crashing
+        # or being fenced. Both are invisible from inside the cluster, which
+        # simply sees nodes rejoin.
+        - alert: PVEHostRebooted
+          expr: |
+            time() - node_boot_time_seconds{job="pve-nodes"} < 600
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxmox host {{ $labels.instance }} rebooted"
+            description: >-
+              Uptime under 10 minutes. If this was not planned, check the host
+              journal for a kernel panic or a watchdog fence. Repeated
+              occurrences indicate failing hardware.
