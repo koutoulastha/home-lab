@@ -59,9 +59,16 @@ spec:
       terminationGracePeriodSeconds: 30
       schedulerName: default-scheduler
       serviceAccountName: default
+      # UID/GID 999 is the image's own `truenas` user, read from the published
+      # 6.0.0 image layers (/etc/passwd), not guessed. It must match: the
+      # Dockerfile makes /app that user's HOME via `useradd --create-home`,
+      # which Debian creates 0700. Any other UID cannot enter /app at all —
+      # this was 65534 (nobody) and the exporter crash-looped on
+      # "can't open file '/app/truenas_exporter.py': Permission denied".
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
+        runAsUser: 999
+        runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -128,20 +135,21 @@ spec:
             - name: LOG_LEVEL
               value: "INFO"
             # Cardinality controls. Task 3 measures and may change these; the
-            # defaults below are the exporter's own conservative ones, restated
-            # explicitly so a future upstream default change cannot move them.
-            - name: ENABLE_GENERIC_METHOD_METRICS
-              value: "false"
-            - name: ENABLE_GENERIC_EVENT_METRICS
-              value: "false"
+            # values below restate the exporter's own defaults explicitly so a
+            # future upstream default change cannot move them. Every name here
+            # was checked against the code inside the 6.0.0 image (which
+            # reports itself as 5.1.0). ENABLE_GENERIC_METHOD_METRICS,
+            # ENABLE_GENERIC_EVENT_METRICS and DATASET_SNAPSHOT_FALLBACK_LIMIT
+            # were set here once and are NOT read by that code — they did
+            # nothing. Generic event metrics are governed by
+            # ENABLE_EVENT_STREAMS (default true), which also carries the live
+            # CPU/memory/network data, so it is left on until Task 3 measures it.
             - name: AUTO_DISCOVER_METHODS
               value: "false"
             - name: SCRAPE_ALL_METRICS
               value: "false"
             - name: ENABLE_FILESYSTEM_LISTDIR
               value: "false"
-            - name: DATASET_SNAPSHOT_FALLBACK_LIMIT
-              value: "0"
             # ENABLE_DATASET_METRICS is deliberately left at the upstream
             # default of true for the first rollout so Task 3 can MEASURE its
             # cost. democratic-csi creates a dataset or zvol per PVC, so this
