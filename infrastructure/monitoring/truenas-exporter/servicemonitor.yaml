@@ -1,0 +1,30 @@
+# No `release: kube-prometheus-stack` label needed: this stack sets
+# serviceMonitorSelectorNilUsesHelmValues: false, so Prometheus discovers every
+# ServiceMonitor in the namespace regardless of labels.
+#
+# Shipped together with EXCLUDE_METHODS in deployment.yaml so the first scrape
+# Prometheus ever takes is the trimmed one (~2.1k series, not ~11k). The
+# excluded methods' generic series include list-indexed snapshot paths that
+# would have churned into the TSDB and stayed there for the full retention.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: truenas-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: truenas-exporter
+  namespaceSelector:
+    matchNames:
+      - monitoring
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # 60s matches the exporter's own SCRAPE_INTERVAL_SECONDS. Scraping faster
+      # than the exporter polls yields duplicate samples, not fresher data.
+      # /metrics is served from the exporter's last poll, so the ~15s TrueNAS
+      # poll never sits inside this scrape's timeout.
+      interval: 60s
+      scrapeTimeout: 30s
+      scheme: http

@@ -150,6 +150,26 @@ spec:
               value: "false"
             - name: ENABLE_FILESYSTEM_LISTDIR
               value: "false"
+            # EXCLUDE_METHODS removes methods from the exporter's GENERIC loop,
+            # which flattens every API result into truenas_method_*{method,path}
+            # series with one `path` per JSON leaf. Measured 2026-09-29 against
+            # the live TrueNAS, before any ServiceMonitor existed: 11015 series
+            # total, 10024 of them generic, and these four methods were 8920:
+            #   pool.snapshot.query   5145  one path per SNAPSHOT, list-indexed
+            #                               (result[N]) — unbounded, and the
+            #                               index shifts as snapshots rotate, so
+            #                               it churns series on every scrape
+            #   pool.dataset.details  1416  per dataset; the dedicated
+            #                               truenas_dataset_* metrics cover it
+            #   user.query            1343  local user accounts
+            #   group.query           1016  local groups
+            # Exclusion is checked only in _discover_methods() (the generic
+            # loop); _call/_safe_call_auto/_query_count ignore it. So the
+            # dedicated metrics built from these methods — total snapshot
+            # count, oldest snapshot age, local user/group counts — keep
+            # working. Verified in the 6.0.0 image's code, not assumed.
+            - name: EXCLUDE_METHODS
+              value: "pool.snapshot.query,pool.dataset.details,user.query,group.query"
             # ENABLE_DATASET_METRICS is deliberately left at the upstream
             # default of true for the first rollout so Task 3 can MEASURE its
             # cost. democratic-csi creates a dataset or zvol per PVC, so this
