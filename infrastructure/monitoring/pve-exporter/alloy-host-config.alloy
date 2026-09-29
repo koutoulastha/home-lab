@@ -1,5 +1,5 @@
 // Alloy config for the Proxmox VE hosts. Installed at
-// /etc/alloy/config.alloy on pve1 and pve2.
+// /etc/alloy/config.alloy on m8 and pve2.
 //
 // WHY AN AGENT HERE BUT NOT ON TRUENAS: Proxmox is plain Debian with a
 // Grafana apt repo, and journald carries _SYSTEMD_UNIT / PRIORITY / _COMM,
@@ -12,19 +12,32 @@ loki.relabel "journal" {
   // is deliberately empty. That is the documented Alloy idiom, not an omission.
   forward_to = []
 
-  // LABELS: bounded only. `unit` is bounded by the number of systemd units
-  // on a hypervisor — tens, not thousands. `host` is 2.
+  // LABELS: bounded only. `host` is 2. `unit` is bounded by the number of
+  // systemd units on a hypervisor — tens — EXCEPT login sessions: systemd
+  // creates a new session-N.scope for every login, so a raw unit label grows
+  // by one stream per SSH session, forever. The second rule folds them into
+  // one value. (Seen live on day one: session-12/13/16.scope.)
   rule {
     source_labels = ["__journal__systemd_unit"]
     target_label  = "unit"
   }
   rule {
+    source_labels = ["unit"]
+    regex         = "session-[0-9]+\\.scope"
+    target_label  = "unit"
+    replacement   = "session.scope"
+  }
+  rule {
     source_labels = ["__journal__hostname"]
     target_label  = "host"
   }
-  // PRIORITY is deliberately NOT a label. It is bounded at 8 values, but it
-  // multiplies every other label's stream count by up to 8 for no query
-  // benefit — LogQL filters it from the line just as well.
+  // PRIORITY is deliberately NOT a label: it would multiply every stream by
+  // up to 8. Note the cost honestly — the forwarded line is only the journal
+  // MESSAGE field, so PRIORITY is not in the line either, and PVE logs cannot
+  // be filtered by severity in Loki. Alerts here match message text instead.
+  // If severity filtering is ever needed, set format_as_json = true on the
+  // source (every journal field then travels in the line) and measure the
+  // volume increase first.
 }
 
 loki.source.journal "pve" {
