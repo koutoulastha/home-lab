@@ -1,0 +1,215 @@
+# TrueNAS alerting. The detection is TrueNAS's own — its alert engine decides
+# "pool degraded" / "SMART failing" / "scrub found errors" / "pool 90% full"
+# with vendor context no PromQL rule could reconstruct. These rules transport
+# that verdict, add a few direct checks on the pool as defence in depth, and
+# add the guards that make the transport trustworthy.
+#
+# `severity` must stay within {critical, warning}: Alertmanager's routes match
+# exactly those, and a rule with any other severity matches no route and is
+# delivered nowhere, silently.
+#
+# Every metric below was read off a live scrape of the exporter (image 6.0.0,
+# code 5.1.0) against this TrueNAS (25.10) on 2026-09-29 — not taken from the
+# plan's draft, which guessed every metric name and got most of them wrong.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: truenas
+  namespace: monitoring
+spec:
+  groups:
+    - name: truenas.rules
+      rules:
+        # ---- TrueNAS's own alerts, transported ----
+        #
+        # TrueNAS levels: INFO, NOTICE, WARNING, ERROR, CRITICAL, ALERT,
+        # EMERGENCY. Every level except INFO must land in exactly one of the
+        # two rules below. The plan's draft omitted ERROR, which would have
+        # matched neither rule and been delivered nowhere.
+        #
+        # By class, not by level alone, so the notification names WHAT is
+        # wrong (klass="VolumeStatus", "SMART", ...) rather than only "1
+        # critical alert". Read the text in the TrueNAS UI (Alerts bell).
+
+        # THE headline storage alert. TrueNAS has already decided this is
+        # serious; we are not second-guessing it. Pool capacity (80%/90%),
+        # pool degraded, SMART failures and failed scrubs all arrive here.
+        - alert: TrueNASAlertCritical
+          expr: |
+            sum by (klass, level) (
+              truenas_alert_count_by_class{level=~"ERROR|CRITICAL|ALERT|EMERGENCY"}
+            ) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TrueNAS {{ $labels.level }}: {{ $labels.klass }}"
+            description: >-
+              TrueNAS's own alert engine raised a {{ $labels.level }} alert of
+              class {{ $labels.klass }}. Read its text in the TrueNAS UI
+              (bell icon). This storage backs every PVC in the cluster and
+              hosts the Proxmox QDevice.
+
+        # for: 30m — warnings include transient conditions TrueNAS clears on
+        # its own. To acknowledge a known, accepted warning, use a time-boxed
+        # Alertmanager silence matching klass=..., not an edit to this rule:
+        # a silence expires and re-surfaces the problem; an exclusion here
+        # would hide it forever.
+        - alert: TrueNASAlertWarning
+          expr: |
+            sum by (klass, level) (
+              truenas_alert_count_by_class{level=~"WARNING|NOTICE"}
+            ) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TrueNAS {{ $labels.level }}: {{ $labels.klass }}"
+            description: >-
+              TrueNAS raised a {{ $labels.level }} alert of class
+              {{ $labels.klass }} and it has persisted for 30 minutes. Read
+              its text in the TrueNAS UI (bell icon).
+
+        # ---- Direct pool checks: defence in depth ----
+        #
+        # Redundant with TrueNAS's VolumeStatus alert on purpose. If the alert
+        # passthrough breaks (API change, alert.list failing), a degraded pool
+        # must still page.
+        #
+        # The boot pool is included because TrueNAS boots from a single eMMC
+        # device here (mmcblk0, boot_pool_disk_count=1) — no redundancy, and
+        # eMMC wears out.
+        - alert: TrueNASPoolNotHealthy
+          expr: |
+            truenas_pool_healthy == 0
+              or
+            label_replace(truenas_boot_pool_healthy == 0, "pool", "boot-pool", "", "")
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TrueNAS pool {{ $labels.pool }} is not healthy"
+            description: >-
+              ZFS reports the pool as unhealthy — degraded, faulted or
+              suspended. IOPSicle is RAIDZ1: one failed disk leaves it with
+              no redundancy, and a second failure loses every PVC. If this is
+              boot-pool, the single eMMC TrueNAS boots from is failing.
+
+        # The vdev counters are GAUGES ("since last scrub clear"), not
+        # counters, so the test is "> 0", not increase(). A non-zero count
+        # persists until someone runs `zpool clear` after investigating — the
+        # alert staying up until then is the intended behaviour.
+        - alert: TrueNASVdevErrors
+          expr: |
+            (
+                truenas_pool_vdev_read_errors
+              + truenas_pool_vdev_write_errors
+              + truenas_pool_vdev_checksum_errors
+            ) > 0
+              or
+            truenas_pool_scan_errors > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ZFS errors on TrueNAS pool {{ $labels.pool }}{{ with $labels.vdev }} ({{ . }}){{ end }}"
+            description: >-
+              ZFS has recorded read, write or checksum errors, or the last
+              scrub found errors. Often the first sign of a failing drive or a
+              bad cable, before the pool degrades. Check `zpool status -v` in
+              the TrueNAS shell; after fixing the cause, `zpool clear` resets
+              the counters and clears this alert.
+
+        # 70°C, not the plan's 55: every data disk here is NVMe (KIOXIA
+        # EXCERIA PLUS G3, observed 39-44°C), and NVMe routinely passes 55°C
+        # under sustained writes while throttling only around 80°C+. 55 was an
+        # HDD threshold.
+        - alert: TrueNASDiskTempHigh
+          expr: |
+            truenas_disk_temperature_celsius > 70
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TrueNAS disk {{ $labels.disk }} at {{ $value }}°C"
+            description: >-
+              Sustained NVMe temperature above 70°C. Thermal throttling cuts
+              throughput for every PVC on the pool; persistent heat shortens
+              drive life. Check airflow and heatsinks.
+
+        # ---- The guards that make all of the above trustworthy ----
+        #
+        # This entire storage-alerting path runs through one community
+        # exporter: single-maintainer, AI-authored. That is acceptable ONLY
+        # because its death is loud. These two rules are the mitigation, not
+        # boilerplate. Deleting them silently converts every alert above into
+        # a rule that cannot fire.
+        #
+        # absent() covers the target vanishing entirely — ServiceMonitor
+        # deleted, Service renamed, Application pruned — which leaves no `up`
+        # series to be 0.
+        - alert: TrueNASExporterDown
+          expr: |
+            up{job="truenas-exporter"} == 0
+              or
+            absent(up{job="truenas-exporter"})
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TrueNAS exporter is down — storage alerting is blind"
+            description: >-
+              Every TrueNAS alert in this group depends on this exporter. While
+              it is down, a degraded pool or a failing disk produces NO page.
+              Check the pod in the monitoring namespace, and whether a TrueNAS
+              upgrade changed the API.
+
+        # `up == 1` is not enough: the exporter serves its last poll's values
+        # from memory, so it can be Up and Ready while those values are stale.
+        # Three ways that happens, each checked:
+        #   - truenas_up == 0: the last poll failed outright (auth, network)
+        #   - pool.query / alert.list failing: the exact calls the alerts
+        #     above are built from. Other methods (smb.status,
+        #     smart.test.results, ...) fail on EVERY poll on this system and
+        #     are deliberately not watched — "any API error" would fire forever
+        #   - no poll for 5 minutes: the poll loop hung while HTTP still serves
+        - alert: TrueNASExporterErrors
+          expr: |
+            truenas_up == 0
+              or
+            truenas_api_call_success{method=~"pool.query|alert.list"} == 0
+              or
+            (time() - truenas_last_scrape_timestamp_seconds) > 300
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TrueNAS exporter is up but its data is stale{{ with $labels.method }} ({{ . }} failing){{ end }}"
+            description: >-
+              The exporter process is healthy but is not getting fresh data
+              from TrueNAS, so the alerts above are evaluating old values and
+              cannot fire. Commonly an expired or revoked API key, or an API
+              change after a TrueNAS upgrade. Check the exporter's logs.
+
+        # On this topology a TrueNAS reboot is a Proxmox quorum event, not only
+        # a storage one — the corosync QDevice runs as a container on TrueNAS.
+        # See the README gotcha and PVEQuorumDegraded.
+        #
+        # < 1800, not < 600: TrueNAS takes several minutes to boot to a working
+        # API, and the exporter polls once a minute. A 10-minute window minus
+        # boot time minus a `for:` could be shorter than one observation, and
+        # the alert would silently never fire.
+        - alert: TrueNASRebooted
+          expr: |
+            truenas_host_uptime_seconds < 1800
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TrueNAS has rebooted"
+            description: >-
+              TrueNAS uptime is under 30 minutes. Every iSCSI/NFS PVC
+              reconnected, and the Proxmox QDevice was gone for the duration —
+              confirm with `pvecm status` that it came back (PVEQuorumDegraded
+              fires after 15 minutes if not). If the reboot was not planned,
+              check the TrueNAS logs.
