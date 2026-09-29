@@ -13,6 +13,18 @@
 controller:
   type: deployment
   replicas: 1
+  # The TLS secret volume. It MUST live here: the chart renders pod volumes
+  # only from controller.volumes.extra (templates/controllers/_pod.yaml).
+  # It was first written as alloy.extraVolumes — not a key in chart 1.12.1,
+  # which has no values.schema.json, so Helm dropped it without a word. The
+  # pod spec then mounted a volume that did not exist, the ReplicaSet could
+  # not create a pod, and for 8 days the Service had a LoadBalancer IP with
+  # nothing behind it.
+  volumes:
+    extra:
+      - name: syslog-tls
+        secret:
+          secretName: syslog-tls
 
 # No node_exporter-style host access needed: this reads a socket, not the host.
 rbac:
@@ -45,11 +57,6 @@ alloy:
   extraEnv:
     - name: SYSLOG_TLS_DIR
       value: /etc/alloy/tls
-
-  extraVolumes:
-    - name: syslog-tls
-      secret:
-        secretName: syslog-tls
 
   resources:
     requests:
