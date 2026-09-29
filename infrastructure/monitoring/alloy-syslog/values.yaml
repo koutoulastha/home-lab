@@ -111,6 +111,16 @@ alloy:
           syslog_format         = "rfc5424"
           labels                = { job = "truenas-syslog" }
           use_incoming_timestamp = true
+          // 128 KiB, not the 8192 default. TrueNAS (syslog_audit on) sends
+          // messages over 60 KB — observed 60652/60653 bytes on first
+          // connect. An oversized frame is a parse error that DROPS THE
+          // CONNECTION, and TrueNAS retransmits its queue in order, so one
+          // big message at the head blocked every message behind it: a
+          // reconnect/reject loop every 60s with almost nothing delivered.
+          // Kept below Loki's own max_line_size (default 256 KB, not
+          // overridden in loki/values.yaml) so the fix does not just move
+          // the rejection downstream.
+          max_message_length     = 131072
 
           tls_config {
             cert_file = "/etc/alloy/tls/tls.crt"
