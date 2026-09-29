@@ -62,6 +62,41 @@ alloy:
     content: |
       // RFC5424 syslog over TLS. Port 6514, not plaintext 514: this crosses
       // the LAN and carries the storage box's auth and audit lines.
+      // LABELS: bounded only — host (1), facility and severity (fixed small
+      // sets), app (the syslog program name: a few dozen TrueNAS daemons such
+      // as middlewared, zed, smartd, kernel). procid and msgid are NOT kept:
+      // procid is unbounded, and in RFC5424 mode the forwarded line is only
+      // the MSG body, so header fields that are not labelled here are gone.
+      //
+      // These MUST be relabel_rules, not a loki.process stage.labels: the
+      // syslog source applies relabel_rules and then deletes every label
+      // starting with "__" before forwarding (Alloy syslogtarget.go, the
+      // HasPrefix(lbl.Name, "__") loop). A downstream stage never sees the
+      // __syslog_message_* values. The first version of this file used
+      // stage.labels and would have shipped every line with no host,
+      // facility or severity at all.
+      loki.relabel "truenas" {
+        forward_to = []   // rules-only component, consumed via .rules below
+        rule {
+          source_labels = ["__syslog_message_hostname"]
+          target_label  = "host"
+        }
+        rule {
+          source_labels = ["__syslog_message_facility"]
+          target_label  = "facility"
+        }
+        rule {
+          source_labels = ["__syslog_message_severity"]
+          target_label  = "severity"
+        }
+        rule {
+          source_labels = ["__syslog_message_app_name"]
+          target_label  = "app"
+        }
+      }
+
+      // RFC5424 syslog over TLS. Port 6514, not plaintext 514: this crosses
+      // the LAN and carries the storage box's auth and audit lines.
       loki.source.syslog "truenas" {
         listener {
           address               = "0.0.0.0:6514"
@@ -75,26 +110,8 @@ alloy:
             key_file  = "/etc/alloy/tls/tls.key"
           }
         }
-        forward_to = [loki.process.truenas.receiver]
-      }
-
-      loki.process "truenas" {
-        // LABELS: bounded only. facility and severity are fixed small sets;
-        // hostname is 1. Everything else — appname, procid, msgid — stays in
-        // the line where LogQL can still filter it.
-        //
-        // This is the Phase 2 lesson applied in advance: the `filename` label
-        // blowout and the stage.label_drop correction both came from
-        // promoting an unbounded value.
-        stage.labels {
-          values = {
-            host     = "__syslog_message_hostname",
-            facility = "__syslog_message_facility",
-            severity = "__syslog_message_severity",
-          }
-        }
-
-        forward_to = [loki.write.default.receiver]
+        relabel_rules = loki.relabel.truenas.rules
+        forward_to    = [loki.write.default.receiver]
       }
 
       loki.write "default" {
