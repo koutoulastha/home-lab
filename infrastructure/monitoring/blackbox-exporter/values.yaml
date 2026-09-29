@@ -26,8 +26,8 @@ config:
 
     # Probes the PUBLIC path by connecting straight to Pangolin's edge IP.
     # Necessary because split-horizon DNS sends every in-cluster probe to the
-    # private address, so nothing else here tests public DNS, the edge, or the
-    # public-facing TLS certificate.
+    # private address, so nothing else here tests the edge or the public-facing
+    # TLS certificate. Public DNS is NOT tested: the target is an IP literal.
     #
     # Connecting by IP means SNI and Host must both be forced to the real
     # hostname, or TLS fails on a name mismatch before HTTP is reached.
@@ -41,7 +41,10 @@ config:
     # Following that redirect reaches Pangolin's auth service, which returns
     # 200 even when this cluster is entirely unreachable — a false green.
     #
-    # SCOPE: this proves public DNS + Pangolin's edge + cert validity.
+    # SCOPE: this proves Pangolin's edge + cert validity for this hostname.
+    # A failure with "certificate is valid for ...traefik.default" means the
+    # edge served Traefik's default cert: Pangolin Cloud has no valid
+    # certificate (or route) for the hostname, typically a failed refresh.
     # It does NOT prove the Newt tunnel is up. That gap is revisited in Task 8.
     http_2xx_pangolin:
       prober: http

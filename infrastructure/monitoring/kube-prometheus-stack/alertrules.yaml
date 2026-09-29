@@ -11,11 +11,9 @@ spec:
         # a realistic outage. Without this it is discovered from a browser
         # warning, after the fact.
         #
-        # Deliberately certmanager_* and not probe_ssl_earliest_cert_expiry:
-        # the blackbox probes also see Pangolin's edge certificate, which is
-        # Pangolin's to renew, not ours. Alerting on it would page about
-        # something unactionable. (At time of writing ours reads 84 days and
-        # Pangolin's 15.)
+        # certmanager_* covers the certificates cert-manager issues in-cluster.
+        # Pangolin's edge certificate is renewed by Pangolin Cloud, not
+        # cert-manager, and has its own rule, PangolinEdgeCertExpiringSoon.
         - alert: CertificateExpiringSoon
           expr: |
             (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 14
@@ -100,12 +98,36 @@ spec:
           annotations:
             description: >-
               Probe of {{ $labels.instance }} has been failing for 5 minutes.
-              The 130.110.2.46 target is Pangolin's public EDGE: it failing means
-              public DNS, the edge itself, or its TLS certificate — it does NOT
-              mean the Newt tunnel is down, and conversely a dead tunnel will not
-              trip it, because Pangolin authenticates before proxying so no
-              unauthenticated probe ever reaches the tunnel. An internal target
+              The 130.110.2.46 target is Pangolin's public EDGE, probed by IP (so
+              public DNS is not tested): it failing means the edge itself or its
+              TLS certificate. A cert with CN "TRAEFIK DEFAULT CERT" means the edge
+              has no certificate or route for the hostname; check that resource's
+              certificate status in Pangolin Cloud and re-trigger the refresh. It
+              does NOT mean the Newt tunnel is down, and conversely a dead tunnel
+              will not trip it, because Pangolin authenticates before proxying so
+              no unauthenticated probe ever reaches the tunnel. An internal target
               failing means Traefik or the backing service.
+
+        # The edge certificate is issued by Pangolin Cloud and can fail to
+        # renew silently: in Sept 2026 the traefik. certificate refresh failed
+        # and the edge fell back to Traefik's default cert, which surfaced only
+        # as BlackboxProbeFailed once it had already broken. This warns while
+        # the old certificate is still valid. It covers only the hostname the
+        # pangolin-tunnel probe uses (SNI in http_2xx_pangolin), not every
+        # Pangolin resource. The series is absent while TLS verification fails;
+        # BlackboxProbeFailed covers that state.
+        - alert: PangolinEdgeCertExpiringSoon
+          expr: |
+            (probe_ssl_earliest_cert_expiry{path="pangolin-public"} - time()) / 86400 < 14
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              Pangolin's edge certificate for the probed hostname expires in
+              {{ $value | printf "%.1f" }} days, so its renewal is failing. Check
+              the resource's certificate status in Pangolin Cloud and re-trigger
+              the refresh.
 
         # A TrueNAS-side storage problem presents as pods stuck in
         # ContainerCreating rather than as anything the default rules catch.

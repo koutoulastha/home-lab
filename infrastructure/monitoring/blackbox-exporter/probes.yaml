@@ -39,8 +39,9 @@ spec:
     staticConfig:
       static:
         # Pangolin's public edge, by IP. This probe failing while
-        # public-hosts-internal passes means the public path is broken:
-        # public DNS, the edge itself, or its TLS certificate. A dead Newt
+        # public-hosts-internal passes means the public path is broken: the
+        # edge itself or its TLS certificate (public DNS is not exercised,
+        # the target is an IP). A dead Newt
         # tunnel is NOT covered — see the module comment in values.yaml.
         - https://130.110.2.46/
       labels:
