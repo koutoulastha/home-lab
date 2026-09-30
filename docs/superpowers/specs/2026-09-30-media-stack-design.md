@@ -49,9 +49,12 @@ apps/media/
 └── README.md           # runbook: manual TrueNAS/Pangolin steps, UI wiring, leak tests
 ```
 
-Alert rules and probes live with the monitoring stack, following the existing
-PVE/TrueNAS alert-rule placement. Each `application.yaml` must be
-`kubectl apply`'d once (no app-of-apps).
+Alert rules and probes live in the `media` namespace next to the app they
+cover (Prometheus selects rules and probes from all namespaces); the blackbox
+modules they use are added to the existing blackbox-exporter values. Each
+`application.yaml` must be `kubectl apply`'d once (no app-of-apps). Argo CD
+pulls app-template from an OCI registry, which needs a repository Secret with
+`enableOCI: "true"` (added under `infrastructure/cicd/argocd/`).
 
 ## 1. qBittorrent + gluetun pod
 
@@ -67,23 +70,40 @@ PVE/TrueNAS alert-rule placement. Each `application.yaml` must be
     `http://127.0.0.1:8080/api/v2/app/setPreferences` on every (re)assignment.
     qBittorrent has "bypass authentication for clients on localhost" enabled.
   - `HTTPPROXY=on` (port 8888) for Prowlarr.
-  - `FIREWALL_INPUT_PORTS=8080,8888`.
-  - `HEALTH_SERVER_ADDRESS=:9999` backs gluetun liveness/readiness probes.
+  - `SERVER_COUNTRIES=Netherlands,Switzerland` (nearby, P2P-heavy).
+  - `FIREWALL_INPUT_PORTS=8080,8888,8000,9999` — gluetun's firewall also
+    filters inbound on eth0, so the control server (blackbox) and health
+    server (kubelet) must be listed too.
+  - `HEALTH_SERVER_ADDRESS=:9999` backs gluetun liveness/readiness probes
+    (the default `127.0.0.1:9999` is unreachable for the kubelet).
+  - The `{{PORT}}` / `{{VPN_INTERFACE}}` placeholders in the up/down commands
+    are Helm-escaped: app-template runs every value through `tpl`.
+- Pod DNS is `dnsPolicy: None` with nameserver `127.0.0.1` (gluetun's DNS
+  over TLS, inside the tunnel). gluetun's firewall blocks cluster DNS anyway,
+  and this makes DNS leaks impossible.
   - Control server `:8000` with an auth config allowing unauthenticated
     `GET /v1/portforward` only.
 - qBittorrent: `ghcr.io/home-operations/qbittorrent` pinned by tag+digest,
   UID/GID 568, read-only root filesystem, `/tmp` emptyDir, `/config` (1Gi
   iSCSI), `/data` (shared NFS PVC). Incomplete dir `/data/torrents/incomplete`.
-  Free-space guard set so downloads pause before the dataset quota is hit.
-- Web UI auth: qBittorrent login (localhost bypass only).
+  Torrent traffic bound to `tun0` (`Session\Interface`) as a third layer.
+  qBittorrent has no minimum-free-space setting; the ZFS quota is the stop.
+- Web UI auth: qBittorrent login (localhost bypass only). The image's default
+  config whitelists all of RFC1918 from auth — i.e. no login at all behind
+  Traefik — so the first-start config is seeded from a ConfigMap mounted over
+  `/defaults/qBittorrent.conf` with the whitelist off.
+- Known, accepted risk: gluetun's HTTP proxy runs in the same pod, so a proxy
+  client could reach qBittorrent's API on localhost without auth. Only
+  Prowlarr can reach the proxy (Cilium), and Prowlarr is LAN-only behind a
+  login.
 
 ### CiliumNetworkPolicy (defense in depth under gluetun's kill switch)
 
 - Egress to `world`: **UDP 51820 only**. Plus nothing else outside the
   cluster — no DNS, no TCP. gluetun connects to Proton by IP from its bundled
   server list; the server-list updater is disabled.
-- Ingress: 8080 from the `media` namespace and the gateway (Traefik);
-  8888 from Prowlarr pods only; 8000 from blackbox-exporter only.
+- Ingress: 8080 from Traefik and Sonarr/Radarr; 8888 from Prowlarr only;
+  8000 from blackbox-exporter only; 9999 from the node (kubelet probes).
 
 ### Leak tests — gate before any real use
 
@@ -108,7 +128,7 @@ PVE/TrueNAS alert-rule placement. Each `application.yaml` must be
 
 - Owns the `media` namespace via `managedNamespaceMetadata` with
   `pod-security.kubernetes.io/enforce: privileged`.
-- PV `media-data`: NFS `server: <TrueNAS IP>`, `path: /mnt/IOPSicle/media`,
+- PV `media-data`: NFS `server: 192.168.20.2`, `path: /mnt/IOPSicle/media`,
   `mountOptions: [nfsvers=4.1, hard]`, `persistentVolumeReclaimPolicy: Retain`,
   `storageClassName: ""`, `claimRef` → `media/media-data`.
 - PVC `media-data`: `ReadWriteMany`, `volumeName: media-data`,
@@ -123,9 +143,11 @@ PVE/TrueNAS alert-rule placement. Each `application.yaml` must be
 └── media/{movies,tv}/
 ```
 
-Every app mounts the whole PVC at `/data` (identical paths everywhere, no
-remote path mappings, hardlinks work) — except Jellyfin, which mounts
-`/data/media` read-only via `subPath`.
+qBittorrent, Sonarr and Radarr mount the whole PVC at `/data` (identical
+paths everywhere, no remote path mappings, hardlinks work). Prowlarr mounts
+only `backups/prowlarr` at `/data/backups/prowlarr`. Jellyfin mounts
+`/data/media` read-only via `subPath`, and `backups/jellyfin` over
+`/config/backups`.
 
 ### Per-app config PVCs
 
@@ -147,6 +169,8 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
     categories `tv` / `movies` saving to `/data/torrents/{tv,movies}`.
   - Root folders `/data/media/tv`, `/data/media/movies`; hardlinks on.
   - Scheduled backups → `/data/backups/<app>`.
+  - Prowlarr's proxy keeps "bypass proxy for local addresses" on, so its
+    calls to Sonarr/Radarr stay in-cluster.
 - Prowlarr CiliumNetworkPolicy: egress only to in-cluster (qBittorrent 8888,
   Sonarr, Radarr, kube-dns) — no direct `world` egress, so a proxy bypass
   fails closed.
@@ -163,14 +187,18 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
 - `/config` 20Gi iSCSI; `/cache` emptyDir; transcode dir emptyDir with
   `sizeLimit`; `/data/media` read-only.
 - Libraries: Movies `/data/media/movies`, Shows `/data/media/tv`.
-  Scheduled backups → `/data/backups/jellyfin` (requires a writable mount of
-  that one subPath).
+- Backups: Jellyfin 12's backup folder is fixed at `<data dir>/backups`
+  (`/config/backups`) and it has no backup schedule. The NFS
+  `backups/jellyfin` directory is mounted over `/config/backups`; backups are
+  taken by hand from the Dashboard after significant changes.
 - HTTPRoute `jellyfin.koutoulastha.dev` (LAN).
 - Pangolin resource (manual, runbook): `jellyfin.koutoulastha.dev`, site
   `main-tunnel`, HTTP → Jellyfin Service :8096, **Pangolin auth disabled**
   (native TV/phone clients cannot pass SSO). Compensating controls: strong
   passwords, remote access disabled for admin users, Jellyfin "Known
-  Proxies" set so real client IPs are logged and rate-limited.
+  Proxies" set to the pod CIDR (it accepts subnets) and "LAN networks" to
+  the home LAN only, so real client IPs are seen and remote vs. local is
+  decided correctly.
 - Expect ~1–2 concurrent remote streams (CPU transcoding, home upload and
   VPS bandwidth).
 
@@ -180,15 +208,20 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
 
 | Name | Signal | For |
 |---|---|---|
-| `QbittorrentVpnDown` | qBittorrent pod not Ready (gluetun health) | 10m |
-| `QbittorrentPortForwardLost` | blackbox probe of gluetun `/v1/portforward` fails / port 0 | 15m |
-| `MediaDatasetFilling` | truenas-exporter dataset usage > 85% of quota (warning), > 95% (critical) | 15m |
-| Jellyfin external | blackbox HTTPS probe of `jellyfin.koutoulastha.dev` | existing probe alert |
+| `QbittorrentVpnDown` | gluetun container not Ready | 10m |
+| `QbittorrentPortForwardLost` | blackbox probe of gluetun `/v1/portforward` fails / port 0; suppressed while the VPN is down | 15m |
+| `MediaDatasetFilling` | `truenas_dataset_used_bytes / truenas_dataset_quota_bytes` for `IOPSicle/media` > 85% (warning), > 95% (critical) | 15m |
+| Jellyfin external | blackbox probe of Pangolin's edge IP with Host `jellyfin.koutoulastha.dev`, expecting 200 `Healthy` from `/health` — end to end through the Newt tunnel, which no existing probe covers | existing `BlackboxProbeFailed` |
+
+The generic `BlackboxProbeFailed` (critical, 5m) excludes the port-forward
+probe, which has its own warning-level alert above.
 
 ### Backups
 
-- App configs: built-in scheduled backups to `/data/backups/<app>` (NFS,
-  off the zvol being backed up). qBittorrent state is not backed up.
+- App configs: Prowlarr/Sonarr/Radarr built-in scheduled backups to
+  `/data/backups/<app>`; Jellyfin manual backups land in
+  `/data/backups/jellyfin`. All on NFS, off the zvol being backed up.
+  qBittorrent state is not backed up.
 - **The media library is not backed up** — deliberate; it is re-downloadable.
 
 ### Error handling
@@ -196,8 +229,8 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
 - Tunnel failure → gluetun firewall blocks all non-tunnel traffic; Cilium
   policy blocks it again at the cluster level; pod goes not-ready; alert.
 - Proxy failure → Prowlarr searches fail (no direct egress to fall back to).
-- Pool pressure → qBittorrent free-space guard pauses first; ZFS quota is the
-  hard stop; alert at 85%.
+- Pool pressure → alert at 85%; the ZFS quota is the hard stop (qBittorrent
+  writes fail and torrents error out; the pool is untouched).
 
 ## Rollout (each phase verified before the next)
 
@@ -210,9 +243,14 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
 4. **Jellyfin** — LAN, then Pangolin resource and external probe.
 5. **Alerts** — firing tests (e.g. delete `tun0` → `QbittorrentVpnDown`).
 
-## Values confirmed during implementation
+## Pinned versions (verified 2026-09-30)
 
-- TrueNAS NFS server IP and Talos node IPs for the share allow-list.
-- Proton WireGuard private key (sealed by the operator with `kubeseal`).
-- Current app-template chart version and image digests (checked against the
-  chart's schema, not assumed).
+- app-template **5.2.1** (`oci://ghcr.io/bjw-s-labs/helm/app-template`)
+- gluetun **v3.41.3**, qBittorrent **5.2.4**, Prowlarr **2.6.5.5623**,
+  Sonarr **4.0.20.3012**, Radarr **6.4.4.10685**, Jellyfin **12.1** — all
+  pinned by digest in the values files.
+
+## Values supplied by the operator during rollout
+
+- Talos node IPs for the NFS share allow-list.
+- Proton WireGuard private key (sealed with `kubeseal`).
