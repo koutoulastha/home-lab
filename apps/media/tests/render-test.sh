@@ -76,6 +76,9 @@ test_qbittorrent() {
   eq "gluetun: P2P port-forward servers"    "$f" "$dep | $g | .env[] | select(.name == \"PORT_FORWARD_ONLY\") | .value" "on"
   eq "gluetun: firewall input ports"        "$f" "$dep | $g | .env[] | select(.name == \"FIREWALL_INPUT_PORTS\") | .value" "8080,8888,8000,9999"
   eq "gluetun: health server off localhost" "$f" "$dep | $g | .env[] | select(.name == \"HEALTH_SERVER_ADDRESS\") | .value" ":9999"
+  # qBittorrent is bound to tun0 (seeded conf) and the leak tests delete tun0;
+  # gluetun names the WireGuard interface wg0 unless told otherwise.
+  eq "gluetun: interface is tun0"           "$f" "$dep | $g | .env[] | select(.name == \"VPN_INTERFACE\") | .value" "tun0"
   eq "gluetun: key from secret"             "$f" "$dep | $g | .envFrom[0].secretRef.name" "gluetun-proton"
   # Survived Helm's tpl pass as literal gluetun placeholders:
   contains "up-command keeps {{PORT}}"      "$f" "$dep | $g | .env[] | select(.name == \"VPN_PORT_FORWARDING_UP_COMMAND\") | .value" '"listen_port\":{{PORT}}'

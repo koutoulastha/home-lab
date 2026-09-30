@@ -35,6 +35,10 @@ controllers:
         env:
           VPN_SERVICE_PROVIDER: protonvpn
           VPN_TYPE: wireguard
+          # gluetun names a WireGuard interface wg0 by default (tun0 is only
+          # its OpenVPN default). Pinned to tun0 because qBittorrent's seeded
+          # config binds to it and the leak tests delete it by that name.
+          VPN_INTERFACE: tun0
           # P2P servers only, with NAT-PMP port forwarding.
           VPN_PORT_FORWARDING: "on"
           PORT_FORWARD_ONLY: "on"
