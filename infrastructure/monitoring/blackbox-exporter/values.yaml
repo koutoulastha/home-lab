@@ -71,3 +71,23 @@ config:
         fail_if_body_not_matches_regexp:
           - '"port":[1-9]'
         preferred_ip_protocol: ip4
+
+    # Jellyfin through Pangolin's public edge, by IP (like http_2xx_pangolin),
+    # but this resource has Pangolin auth disabled, so the request is proxied
+    # through the Newt tunnel to Jellyfin itself: 200 + "Healthy" proves the
+    # whole path. A 302 here means Pangolin auth was re-enabled on the
+    # resource. Used by apps/media/jellyfin/probe.yaml.
+    http_jellyfin_pangolin:
+      prober: http
+      timeout: 10s
+      http:
+        valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+        valid_status_codes: [200]
+        follow_redirects: false
+        fail_if_body_not_matches_regexp:
+          - Healthy
+        preferred_ip_protocol: ip4
+        headers:
+          Host: jellyfin.koutoulastha.dev
+        tls_config:
+          server_name: jellyfin.koutoulastha.dev

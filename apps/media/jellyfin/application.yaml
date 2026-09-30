@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jellyfin
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: media
+  sources:
+    - repoURL: ghcr.io/bjw-s-labs/helm
+      chart: app-template
+      targetRevision: 5.2.1
+      helm:
+        releaseName: jellyfin
+        valueFiles:
+          # $values paths are always relative to the repo root.
+          - $values/apps/media/jellyfin/values.yaml
+    # Supplies the values file above, and renders this directory's plain
+    # manifests (sealed secret, network policy, probe, alert rules).
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      ref: values
+      path: apps/media/jellyfin
+      directory:
+        exclude: '{application.yaml,values.yaml}'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # No CreateNamespace: media-storage owns the namespace and its Pod
+    # Security label, and must be synced first.

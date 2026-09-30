@@ -1,0 +1,91 @@
+# Jellyfin 12.1. Values for bjw-s app-template 5.2.1 (checked by
+# apps/media/tests/render-test.sh). Direct play, CPU-only transcoding — no
+# GPU is passed through to the Talos VMs.
+defaultPodOptions:
+  securityContext:
+    fsGroup: 568
+    fsGroupChangePolicy: OnRootMismatch
+
+controllers:
+  jellyfin:
+    strategy: Recreate
+    containers:
+      app:
+        image:
+          repository: ghcr.io/jellyfin/jellyfin
+          tag: 12.1@sha256:008ec8024bdaaa6f0a3f0de468e185633eeba9d67c56936e8dbf5ef6b8d6200f
+        probes:
+          # /health answers 200 "Healthy" without authentication.
+          liveness: &probe
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /health, port: 8096}
+              periodSeconds: 30
+              failureThreshold: 5
+          readiness: *probe
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /health, port: 8096}
+              periodSeconds: 5
+              failureThreshold: 60
+        # The image runs as root by default. Root filesystem stays writable:
+        # Jellyfin/ffmpeg write outside the declared volumes (font cache etc.)
+        # in ways not worth chasing for a service with no network privileges.
+        securityContext:
+          runAsUser: 568
+          runAsGroup: 568
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+
+service:
+  app:
+    controller: jellyfin
+    ports:
+      http:
+        port: 8096
+
+route:
+  app:
+    parentRefs:
+      - name: traefik-gateway
+        namespace: default
+    hostnames: [jellyfin.koutoulastha.dev]
+    rules:
+      - backendRefs:
+          - identifier: app
+            port: 8096
+
+persistence:
+  # JELLYFIN_DATA_DIR=/config in this image: database, metadata, images.
+  config:
+    type: persistentVolumeClaim
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+    size: 20Gi
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false
+    globalMounts:
+      - path: /config
+  # JELLYFIN_CACHE_DIR=/cache, plus transcodes (Jellyfin's default transcode
+  # path lives under the cache dir). Capped: a runaway transcode evicts the
+  # pod instead of filling the node's disk.
+  cache:
+    type: emptyDir
+    sizeLimit: 20Gi
+    globalMounts:
+      - path: /cache
+  media:
+    existingClaim: media-data
+    globalMounts:
+      # Library: read-only — Jellyfin has no business writing there.
+      - path: /data/media
+        subPath: media
+        readOnly: true
+      # Jellyfin's backup folder is fixed at <data dir>/backups and cannot be
+      # configured, so the NFS backups directory is mounted over it.
+      - path: /config/backups
+        subPath: backups/jellyfin
