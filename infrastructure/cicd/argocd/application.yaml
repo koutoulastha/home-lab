@@ -13,7 +13,7 @@ spec:
     targetRevision: main
     path: infrastructure/cicd/argocd
     directory:
-      include: '{httproute.yaml}'
+      include: '{httproute.yaml,repo-bjw-s-labs.yaml}'
   syncPolicy:
     automated:
       prune: true

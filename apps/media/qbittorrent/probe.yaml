@@ -1,0 +1,20 @@
+# Is Proton still forwarding a port to us? gluetun's control server answers
+# {"port":N}; N=0 means forwarding is lost, which leaves torrents running but
+# unreachable by peers (slow downloads, near-zero seeding). The module fails
+# on anything but a non-zero port.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: qbittorrent-portforward
+  namespace: media
+spec:
+  interval: 60s
+  module: http_gluetun_portforward
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  targets:
+    staticConfig:
+      static:
+        - http://qbittorrent.media.svc.cluster.local:8000/v1/portforward
+      labels:
+        path: vpn-portforward

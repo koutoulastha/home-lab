@@ -1,0 +1,22 @@
+# Jellyfin through Pangolin, end to end: edge -> Newt tunnel -> Jellyfin.
+#
+# Unlike the pangolin-tunnel probe (which stops at the edge's auth redirect),
+# this resource has Pangolin auth disabled, so a 200 "Healthy" can only come
+# from Jellyfin itself. This is the one probe that notices a dead Newt tunnel.
+# A 302 means someone re-enabled Pangolin auth on the resource.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: jellyfin-public
+  namespace: media
+spec:
+  interval: 60s
+  module: http_jellyfin_pangolin
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  targets:
+    staticConfig:
+      static:
+        - https://130.110.2.46/health
+      labels:
+        path: jellyfin-public

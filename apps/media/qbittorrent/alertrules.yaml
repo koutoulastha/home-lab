@@ -1,0 +1,48 @@
+# VPN health for the qBittorrent pod.
+#
+# `severity` must stay within {critical, warning} — Alertmanager routes only
+# those. Both are warnings: a dead tunnel stops torrents (fails closed), it
+# does not leak, so nothing here is urgent in the middle of the night.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: media-vpn
+  namespace: media
+spec:
+  groups:
+    - name: media-vpn.rules
+      rules:
+        # gluetun's readiness probe is its health server: not ready means the
+        # tunnel is down and gluetun's own auto-heal has not fixed it.
+        # gluetun is a native sidecar, i.e. an INIT container: kube-state-
+        # metrics reports it under kube_pod_init_container_status_ready, and
+        # kube_pod_container_status_ready never has a gluetun series.
+        - alert: QbittorrentVpnDown
+          expr: |
+            kube_pod_init_container_status_ready{namespace="media", container="gluetun"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              gluetun in {{ $labels.pod }} has been not-ready for 10 minutes:
+              the Proton tunnel is down, so qBittorrent and Prowlarr's indexer
+              searches are stopped (by design — they fail closed). Check
+              `kubectl -n media logs {{ $labels.pod }} -c gluetun`; an expired
+              or revoked WireGuard key is the most common cause.
+
+        # Suppressed while the VPN itself is down — that alert explains this.
+        - alert: QbittorrentPortForwardLost
+          expr: |
+            probe_success{job="probe/media/qbittorrent-portforward"} == 0
+            unless on()
+            (kube_pod_init_container_status_ready{namespace="media", container="gluetun"} == 0)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              Proton has not forwarded a port for 15 minutes while the tunnel
+              is up. Torrents still run but peers cannot connect in. Check the
+              gluetun logs for port forwarding errors; restarting the pod
+              picks a new P2P server.

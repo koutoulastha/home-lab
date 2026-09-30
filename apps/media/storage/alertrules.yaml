@@ -1,0 +1,43 @@
+# IOPSicle/media has a 2 TiB ZFS quota because the pool is shared with every
+# iSCSI zvol in the cluster. At the quota, qBittorrent's writes fail and the
+# affected torrents error out — safe for the pool, but downloads stop. These
+# warn well before that. The warning stops at 95% so the two do not both
+# notify once the critical one fires.
+#
+# Metrics from truenas-exporter (ENABLE_DATASET_METRICS=true); the `dataset`
+# label value is the full dataset name. quota_bytes > 0 guards against the
+# quota having been removed, which would otherwise divide by zero silently.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: media-storage
+  namespace: media
+spec:
+  groups:
+    - name: media-storage.rules
+      rules:
+        - alert: MediaDatasetFilling
+          expr: |
+            truenas_dataset_used_bytes{dataset="IOPSicle/media"}
+              / (truenas_dataset_quota_bytes{dataset="IOPSicle/media"} > 0)
+              > 0.85 <= 0.95
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            description: >-
+              IOPSicle/media is {{ $value | humanizePercentage }} of its quota.
+              Delete watched media or raise the quota (and check the pool has
+              room for it — the iSCSI volumes share it).
+        - alert: MediaDatasetFilling
+          expr: |
+            truenas_dataset_used_bytes{dataset="IOPSicle/media"}
+              / (truenas_dataset_quota_bytes{dataset="IOPSicle/media"} > 0)
+              > 0.95
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            description: >-
+              IOPSicle/media is {{ $value | humanizePercentage }} of its quota;
+              downloads will start failing. Free space now.

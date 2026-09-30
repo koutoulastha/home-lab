@@ -90,8 +90,11 @@ spec:
         # The temporary grafana.koutoulastha.dev exclusion was removed in Task 8,
         # once that hostname got its HTTPRoute and its probe went green. Every
         # probed target is now genuinely covered.
+        # The VPN port-forward probe (path="vpn-portforward") has its own
+        # warning-level alert, QbittorrentPortForwardLost in apps/media; a lost
+        # forwarded port is not a critical outage.
         - alert: BlackboxProbeFailed
-          expr: probe_success == 0
+          expr: probe_success{path!="vpn-portforward"} == 0
           for: 5m
           labels:
             severity: critical

@@ -1,0 +1,16 @@
+# Lets Argo CD pull Helm charts from bjw-s-labs' OCI registry (app-template,
+# used by every apps/media Application). OCI Helm repositories must be
+# declared with enableOCI; the registry is public, so no credentials — this
+# Secret is safe to commit in plain text.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-bjw-s-labs
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: helm
+  name: bjw-s-labs
+  url: ghcr.io/bjw-s-labs/helm
+  enableOCI: "true"

@@ -1,0 +1,30 @@
+# The media library: TrueNAS dataset IOPSicle/media over NFS, statically
+# bound. Created by hand on TrueNAS (see apps/media/README.md), not by
+# democratic-csi — its lifecycle must not depend on the cluster's.
+#
+# Retain + claimRef: only media/media-data can bind this, and deleting that
+# claim leaves the PV (and the data) in place.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: media-data
+  annotations:
+    # Delete=false: a cascading delete of the media-storage Application must
+    # leave this object (and so the binding to the data) in place.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  capacity:
+    storage: 2Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: media
+    name: media-data
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+  nfs:
+    server: 192.168.20.2
+    path: /mnt/IOPSicle/media
