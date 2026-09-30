@@ -1,0 +1,86 @@
+# Radarr. Values for bjw-s app-template 5.2.1 (checked by
+# apps/media/tests/render-test.sh). Same shape as sonarr/values.yaml.
+defaultPodOptions:
+  securityContext:
+    fsGroup: 568
+    fsGroupChangePolicy: OnRootMismatch
+
+controllers:
+  radarr:
+    strategy: Recreate
+    containers:
+      app:
+        image:
+          repository: ghcr.io/home-operations/radarr
+          tag: 6.4.4.10685@sha256:be53998a2d39cfa3c3315b70c7509a6a1f2a10c3aee9337653efc9f4c970430e
+        env:
+          RADARR__AUTH__METHOD: Forms
+          RADARR__AUTH__REQUIRED: Enabled
+        # RADARR__AUTH__APIKEY, from sealed-secret.yaml. Pre-seeding the key
+        # means Prowlarr can be wired to Radarr without copying it out of a UI.
+        envFrom:
+          - secretRef:
+              name: radarr-secret
+        probes:
+          # /ping answers 200 without authentication.
+          liveness: &probe
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /ping, port: 7878}
+              periodSeconds: 30
+              failureThreshold: 5
+          readiness: *probe
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /ping, port: 7878}
+              periodSeconds: 5
+              failureThreshold: 60
+        securityContext:
+          runAsUser: 568
+          runAsGroup: 568
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+
+service:
+  app:
+    controller: radarr
+    ports:
+      http:
+        port: 7878
+
+route:
+  app:
+    parentRefs:
+      - name: traefik-gateway
+        namespace: default
+    hostnames: [radarr.koutoulastha.dev]
+    rules:
+      - backendRefs:
+          - identifier: app
+            port: 7878
+
+persistence:
+  config:
+    type: persistentVolumeClaim
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false
+    globalMounts:
+      - path: /config
+  # The whole volume at /data, same path as qBittorrent: no remote path
+  # mappings, and imports are hardlinks because it is one filesystem.
+  data:
+    existingClaim: media-data
+    globalMounts:
+      - path: /data
+  tmp:
+    type: emptyDir
+    globalMounts:
+      - path: /tmp
