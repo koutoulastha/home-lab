@@ -70,7 +70,7 @@ pulls app-template from an OCI registry, which needs a repository Secret with
     `http://127.0.0.1:8080/api/v2/app/setPreferences` on every (re)assignment.
     qBittorrent has "bypass authentication for clients on localhost" enabled.
   - `HTTPPROXY=on` (port 8888) for Prowlarr.
-  - `SERVER_COUNTRIES=Netherlands,Switzerland` (nearby, P2P-heavy).
+  - `SERVER_COUNTRIES=Greece,Italy,Bulgaria,Cyprus,Romania,Albania,Serbia,Croatia,Slovenia,Hungary,Austria,Czech Republic,Germany,Switzerland,Netherlands` — names exactly as in gluetun's server list; ~60 port-forwarding WireGuard servers.
   - `FIREWALL_INPUT_PORTS=8080,8888,8000,9999` — gluetun's firewall also
     filters inbound on eth0, so the control server (blackbox) and health
     server (kubelet) must be listed too.

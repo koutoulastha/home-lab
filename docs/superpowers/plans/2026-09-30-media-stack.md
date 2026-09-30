@@ -591,7 +591,11 @@ controllers:
           # P2P servers only, with NAT-PMP port forwarding.
           VPN_PORT_FORWARDING: "on"
           PORT_FORWARD_ONLY: "on"
-          SERVER_COUNTRIES: Netherlands,Switzerland
+          # Southern/central Europe, nearest first in spirit. Every name must
+          # match gluetun's bundled server list exactly — an unknown country
+          # stops gluetun at startup. With PORT_FORWARD_ONLY these cover ~60
+          # Proton WireGuard servers (v3.41.3 data); Greece alone has one.
+          SERVER_COUNTRIES: Greece,Italy,Bulgaria,Cyprus,Romania,Albania,Serbia,Croatia,Slovenia,Hungary,Austria,Czech Republic,Germany,Switzerland,Netherlands
           # Push each (re)assigned forwarded port into qBittorrent. Relies on
           # qBittorrent's localhost auth bypass (WebUI\LocalHostAuth=false).
           # The DOWN command resets the port — qBittorrent otherwise fails to
