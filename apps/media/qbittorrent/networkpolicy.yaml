@@ -1,0 +1,62 @@
+# Cluster-level kill switch for the qBittorrent pod, underneath gluetun's own
+# firewall. If gluetun ever let a packet out of eth0 that was not WireGuard,
+# Cilium drops it here.
+#
+# Egress: the world on UDP 51820 only (Proton's WireGuard port; gluetun
+# connects by IP from its bundled server list, so no DNS is needed before the
+# tunnel is up). DNS for the pod goes to gluetun on 127.0.0.1, which no
+# policy governs. Nothing else — not even cluster DNS.
+#
+# Ingress, per port:
+#   8080  web UI/API   — Traefik (the LAN route) and Sonarr/Radarr
+#   8888  HTTP proxy   — Prowlarr only
+#   8000  control srv  — blackbox-exporter only (port-forward probe)
+#   9999  health srv   — the node (kubelet probes)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: qbittorrent
+  namespace: media
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: qbittorrent
+  egress:
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - port: "51820"
+              protocol: UDP
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+            app.kubernetes.io/name: traefik
+        - matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values: [sonarr, radarr]
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: prowlarr
+      toPorts:
+        - ports:
+            - port: "8888"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: prometheus-blackbox-exporter
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+    - fromEntities: [host]
+      toPorts:
+        - ports:
+            - port: "9999"
+              protocol: TCP

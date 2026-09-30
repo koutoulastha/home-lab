@@ -1,0 +1,249 @@
+# qBittorrent with a gluetun (Proton VPN, WireGuard) sidecar. Values for
+# bjw-s app-template 5.2.1 — keys checked against that chart version's
+# templates by apps/media/tests/render-test.sh, not assumed.
+#
+# Three layers keep torrent traffic off the home IP:
+#   1. gluetun's firewall (in-pod iptables kill switch),
+#   2. qBittorrent bound to tun0 (Session\Interface in the defaults below),
+#   3. networkpolicy.yaml — Cilium lets this pod reach the world on UDP 51820
+#      (the WireGuard handshake) and nothing else.
+defaultPodOptions:
+  securityContext:
+    fsGroup: 568
+    fsGroupChangePolicy: OnRootMismatch
+
+controllers:
+  qbittorrent:
+    strategy: Recreate
+    pod:
+      # Every container in the pod resolves through gluetun's DNS server on
+      # 127.0.0.1 (DNS over TLS, inside the tunnel). Cluster DNS would be
+      # unreachable anyway — gluetun's firewall blocks non-tunnel egress — so
+      # without this qBittorrent could not resolve tracker hostnames. It also
+      # means DNS cannot leak.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: [127.0.0.1]
+    initContainers:
+      # Native sidecar (restartPolicy: Always): starts, and must pass its
+      # startup probe, before qBittorrent starts; keeps running alongside it.
+      gluetun:
+        image:
+          repository: ghcr.io/qdm12/gluetun
+          tag: v3.41.3@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027
+        restartPolicy: Always
+        env:
+          VPN_SERVICE_PROVIDER: protonvpn
+          VPN_TYPE: wireguard
+          # P2P servers only, with NAT-PMP port forwarding.
+          VPN_PORT_FORWARDING: "on"
+          PORT_FORWARD_ONLY: "on"
+          # Southern/central Europe, nearest first in spirit. Every name must
+          # match gluetun's bundled server list exactly — an unknown country
+          # stops gluetun at startup. With PORT_FORWARD_ONLY these cover ~60
+          # Proton WireGuard servers (v3.41.3 data); Greece alone has one.
+          SERVER_COUNTRIES: Greece,Italy,Bulgaria,Cyprus,Romania,Albania,Serbia,Croatia,Slovenia,Hungary,Austria,Czech Republic,Germany,Switzerland,Netherlands
+          # Push each (re)assigned forwarded port into qBittorrent. Relies on
+          # qBittorrent's localhost auth bypass (WebUI\LocalHostAuth=false).
+          # The DOWN command resets the port — qBittorrent otherwise fails to
+          # rebind after a reconnect (gluetun wiki, qBittorrent example).
+          # {{ "{{PORT}}" }} is Helm-escaped: app-template runs every value
+          # through `tpl`, and gluetun needs the literal {{PORT}} placeholder.
+          VPN_PORT_FORWARDING_UP_COMMAND: >-
+            /bin/sh -c 'wget -O- -nv --retry-connrefused --post-data
+            "json={\"listen_port\":{{ "{{PORT}}" }},\"current_network_interface\":\"{{ "{{VPN_INTERFACE}}" }}\",\"random_port\":false,\"upnp\":false}"
+            http://127.0.0.1:8080/api/v2/app/setPreferences'
+          VPN_PORT_FORWARDING_DOWN_COMMAND: >-
+            /bin/sh -c 'wget -O- -nv --retry-connrefused --post-data
+            "json={\"listen_port\":0,\"current_network_interface\":\"lo\"}"
+            http://127.0.0.1:8080/api/v2/app/setPreferences'
+          # HTTP proxy for Prowlarr's indexer traffic (exits via the tunnel).
+          HTTPPROXY: "on"
+          # Ports reachable on eth0 through gluetun's firewall: web UI,
+          # proxy, control server (blackbox probe), health server (kubelet).
+          FIREWALL_INPUT_PORTS: "8080,8888,8000,9999"
+          # Default is 127.0.0.1:9999, which kubelet cannot reach.
+          HEALTH_SERVER_ADDRESS: ":9999"
+        envFrom:
+          - secretRef:
+              name: gluetun-proton
+        probes:
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /, port: 9999}
+              periodSeconds: 5
+              failureThreshold: 36  # 3 minutes to establish the tunnel
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /, port: 9999}
+              periodSeconds: 10
+              failureThreshold: 3
+          liveness:
+            # gluetun heals the tunnel internally (HEALTH_RESTART_VPN). The
+            # kubelet only restarts it if that has failed for 5 minutes.
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /, port: 9999}
+              periodSeconds: 30
+              failureThreshold: 10
+        securityContext:
+          capabilities:
+            add: [NET_ADMIN]
+    containers:
+      app:
+        image:
+          repository: ghcr.io/home-operations/qbittorrent
+          tag: 5.2.4@sha256:9307627e03981d5473aa31175ea76ed56ea3752333ca49d601b6af45e281e7ba
+        probes:
+          # TCP on the web UI port: every qBittorrent HTTP endpoint other
+          # than the login page needs auth, so an httpGet would see 403.
+          liveness: &tcp
+            enabled: true
+            custom: true
+            spec:
+              tcpSocket: {port: 8080}
+              periodSeconds: 30
+              failureThreshold: 5
+          readiness: *tcp
+        securityContext:
+          runAsUser: 568
+          runAsGroup: 568
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+
+service:
+  app:
+    controller: qbittorrent
+    ports:
+      http:
+        primary: true
+        port: 8080
+      proxy:
+        port: 8888
+      control:
+        port: 8000
+
+route:
+  app:
+    parentRefs:
+      - name: traefik-gateway
+        namespace: default
+    hostnames: [qbittorrent.koutoulastha.dev]
+    rules:
+      - backendRefs:
+          - identifier: app
+            port: 8080
+
+configMaps:
+  gluetun-auth:
+    data:
+      # Every control-server route requires auth since gluetun v3.39.1. The
+      # blackbox probe needs exactly one read-only route, unauthenticated;
+      # networkpolicy.yaml limits port 8000 to blackbox-exporter.
+      config.toml: |
+        [[roles]]
+        name = "blackbox"
+        routes = ["GET /v1/portforward"]
+        auth = "none"
+  qbittorrent-defaults:
+    data:
+      # The image copies /defaults/qBittorrent.conf into /config only when no
+      # config exists yet, so this seeds the first start and is ignored after.
+      # Upstream's defaults, except:
+      #   - AuthSubnetWhitelistEnabled=false: upstream whitelists all of
+      #     RFC1918, which here means no login at all (Traefik and the LAN
+      #     are both private addresses).
+      #   - Session\Interface=tun0: bind torrent traffic to the tunnel.
+      #   - save paths under /data/torrents; automatic torrent management on,
+      #     so an *arr category "tv" saves to /data/torrents/tv.
+      qBittorrent.conf: |
+        [AutoRun]
+        enabled=false
+        program=
+
+        [LegalNotice]
+        Accepted=true
+
+        [BitTorrent]
+        Session\AsyncIOThreadsCount=10
+        Session\DefaultSavePath=/data/torrents
+        Session\DisableAutoTMMByDefault=false
+        Session\DiskCacheSize=-1
+        Session\DiskIOReadMode=DisableOSCache
+        Session\DiskIOType=SimplePreadPwrite
+        Session\DiskIOWriteMode=EnableOSCache
+        Session\DiskQueueSize=4194304
+        Session\FilePoolSize=40
+        Session\HashingThreadsCount=2
+        Session\Interface=tun0
+        Session\InterfaceName=tun0
+        Session\Port=50413
+        Session\ResumeDataStorageType=SQLite
+        Session\TempPath=/data/torrents/incomplete
+        Session\TempPathEnabled=true
+        Session\UseOSCache=true
+
+        [Preferences]
+        Connection\PortRangeMin=6881
+        Connection\UPnP=false
+        General\Locale=en
+        General\UseRandomPort=false
+        WebUI\Address=*
+        WebUI\AuthSubnetWhitelistEnabled=false
+        WebUI\CSRFProtection=false
+        WebUI\HostHeaderValidation=false
+        WebUI\LocalHostAuth=false
+        WebUI\Port=8080
+        WebUI\ServerDomains=*
+        WebUI\UseUPnP=false
+
+persistence:
+  config:
+    type: persistentVolumeClaim
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    annotations:
+      # truenas-iscsi reclaimPolicy is Delete: a pruned PVC takes its zvol.
+      argocd.argoproj.io/sync-options: Prune=false
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /config
+  data:
+    existingClaim: media-data
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /data
+  tmp:
+    type: emptyDir
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /tmp
+  defaults:
+    type: configMap
+    identifier: qbittorrent-defaults
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /defaults/qBittorrent.conf
+            subPath: qBittorrent.conf
+            readOnly: true
+  gluetun-auth:
+    type: configMap
+    identifier: gluetun-auth
+    advancedMounts:
+      qbittorrent:
+        gluetun:
+          - path: /gluetun/auth/config.toml
+            subPath: config.toml
+            readOnly: true
