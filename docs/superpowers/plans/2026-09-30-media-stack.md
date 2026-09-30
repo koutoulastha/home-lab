@@ -2168,7 +2168,7 @@ Expected: `BLOCKED` (Cilium: no direct egress); the proxied request prints the P
 
 - [ ] **Step 5: Prowlarr → Sonarr/Radarr, then an indexer**
 
-*Settings → Apps → + Sonarr*: Prowlarr server `http://prowlarr.media.svc:9696`, Sonarr server `http://sonarr.media.svc:8989`, API key = the Sonarr key from Task 6 Step 7. **Test**, save. Same for Radarr (`http://radarr.media.svc:7878`). *Indexers → Add*: one public indexer; **Test**. In Sonarr *Settings → Indexers*, the indexer appears (synced by Prowlarr).
+*Settings → Apps → + Sonarr*: Prowlarr server `http://prowlarr.media.svc:9696`, Sonarr server `http://sonarr:8989`, API key = the Sonarr key from Task 6 Step 7. **Test**, save. Same for Radarr (`http://radarr:7878`). Use the **single-label** hostnames `sonarr` / `radarr` here, not `*.media.svc`: Prowlarr's proxy only bypasses dotless hostnames (.NET `WebProxy` locality rules), so a dotted name would be sent into gluetun's proxy and fail. *Indexers → Add*: one public indexer; **Test**. In Sonarr *Settings → Indexers*, the indexer appears (synced by Prowlarr).
 
 - [ ] **Step 6: End-to-end with hardlink check**
 

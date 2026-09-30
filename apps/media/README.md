@@ -83,6 +83,9 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   `/data/backups/<app>`; Jellyfin backups are manual (*Dashboard → Backups*)
   and land in `/data/backups/jellyfin` (mounted over `/config/backups`). The
   media library itself is deliberately not backed up.
+- **Prowlarr → Sonarr/Radarr** (*Settings → Apps*) must use `http://sonarr:8989`
+  and `http://radarr:7878`. Prowlarr's global proxy bypasses only dotless
+  hostnames, so `sonarr.media.svc` would be sent into gluetun's proxy and fail.
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
 

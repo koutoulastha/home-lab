@@ -163,7 +163,9 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
   `<APP>__AUTH__APIKEY`, `<APP>__AUTH__METHOD=Forms`,
   `<APP>__AUTH__REQUIRED=Enabled`.
 - Wiring (runbook, done once in the UIs — not declarative):
-  - Prowlarr Apps → `http://sonarr.media.svc:8989`, `http://radarr.media.svc:7878`.
+  - Prowlarr Apps → `http://sonarr:8989`, `http://radarr:7878` — single-label
+    names, because Prowlarr's proxy bypass only treats dotless hostnames as
+    local; `sonarr.media.svc` would be proxied through gluetun and fail.
   - Prowlarr proxy → HTTP `qbittorrent.media.svc:8888`, applied to all indexers.
   - Sonarr/Radarr download client → `http://qbittorrent.media.svc:8080`,
     categories `tv` / `movies` saving to `/data/torrents/{tv,movies}`.
