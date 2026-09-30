@@ -58,3 +58,16 @@ config:
           Host: traefik.koutoulastha.dev
         tls_config:
           server_name: traefik.koutoulastha.dev
+
+    # gluetun's control server: {"port":N} with N > 0 while Proton forwards a
+    # port. Fails on port 0 (forwarding lost) as well as on no answer. Used by
+    # apps/media/qbittorrent/probe.yaml; route auth is opened for exactly this
+    # GET in that app's gluetun-auth ConfigMap.
+    http_gluetun_portforward:
+      prober: http
+      timeout: 5s
+      http:
+        valid_status_codes: [200]
+        fail_if_body_not_matches_regexp:
+          - '"port":[1-9]'
+        preferred_ip_protocol: ip4
