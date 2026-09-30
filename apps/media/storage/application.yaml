@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: media-storage
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: media
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: apps/media/storage
+    directory:
+      exclude: application.yaml
+  syncPolicy:
+    automated:
+      # Never prune: this Application holds the media library's PV/PVC. A
+      # file deleted from git must not become a deleted library.
+      prune: false
+      selfHeal: true
+    # This Application owns the `media` namespace and its metadata; the app
+    # Applications do not set CreateNamespace, so they cannot contend over it.
+    # privileged: gluetun needs NET_ADMIN, which the cluster-default
+    # `baseline` Pod Security Standard rejects.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    syncOptions:
+      - CreateNamespace=true
