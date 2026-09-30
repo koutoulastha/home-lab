@@ -216,7 +216,8 @@ persistence:
     size: 1Gi
     annotations:
       # truenas-iscsi reclaimPolicy is Delete: a pruned PVC takes its zvol.
-      argocd.argoproj.io/sync-options: Prune=false
+      # Delete=false also keeps it through a cascading Application delete.
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     advancedMounts:
       qbittorrent:
         app:

@@ -67,7 +67,7 @@ persistence:
     accessMode: ReadWriteOnce
     size: 20Gi
     annotations:
-      argocd.argoproj.io/sync-options: Prune=false
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     globalMounts:
       - path: /config
   # JELLYFIN_CACHE_DIR=/cache, plus transcodes (Jellyfin's default transcode

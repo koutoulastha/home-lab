@@ -71,7 +71,7 @@ persistence:
     accessMode: ReadWriteOnce
     size: 5Gi
     annotations:
-      argocd.argoproj.io/sync-options: Prune=false
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     globalMounts:
       - path: /config
   # The whole volume at /data, same path as qBittorrent: no remote path

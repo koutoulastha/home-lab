@@ -71,7 +71,7 @@ persistence:
     accessMode: ReadWriteOnce
     size: 5Gi
     annotations:
-      argocd.argoproj.io/sync-options: Prune=false
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     globalMounts:
       - path: /config
   # Prowlarr never touches downloads or media; it only needs somewhere off

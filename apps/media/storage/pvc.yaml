@@ -4,8 +4,9 @@ metadata:
   name: media-data
   namespace: media
   annotations:
-    # Second guard after the Application's prune: false.
-    argocd.argoproj.io/sync-options: Prune=false
+    # Second guard after the Application's prune: false; Delete=false also
+    # survives a cascading delete of the Application.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   accessModes:
     - ReadWriteMany

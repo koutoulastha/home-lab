@@ -8,6 +8,10 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: media-data
+  annotations:
+    # Delete=false: a cascading delete of the media-storage Application must
+    # leave this object (and so the binding to the data) in place.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   capacity:
     storage: 2Ti
