@@ -196,9 +196,11 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
   taken by hand from the Dashboard after significant changes.
 - HTTPRoute `jellyfin.koutoulastha.dev` (LAN).
 - Pangolin resource (manual, runbook): `jellyfin.koutoulastha.dev`, site
-  `main-tunnel`, HTTP → Jellyfin Service :8096, **Pangolin auth disabled**
-  (native TV/phone clients cannot pass SSO). Compensating controls: strong
-  passwords, remote access disabled for admin users, Jellyfin "Known
+  `main-tunnel`, HTTP → Jellyfin Service :8096, **Pangolin SSO on**
+  (revised during rollout, 2026-10-01: extra security preferred over native
+  app support — remote access is browser-only; TV/phone apps work on the LAN).
+  Defence in depth behind SSO: strong passwords, remote access disabled for
+  admin users, Jellyfin "Known
   Proxies" set to the pod CIDR (it accepts subnets) and "LAN networks" to
   the home LAN only, so real client IPs are seen and remote vs. local is
   decided correctly.
@@ -214,7 +216,7 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
 | `QbittorrentVpnDown` | gluetun container not Ready | 10m |
 | `QbittorrentPortForwardLost` | blackbox probe of gluetun `/v1/portforward` fails / port 0; suppressed while the VPN is down | 15m |
 | `MediaDatasetFilling` | `truenas_dataset_used_bytes / truenas_dataset_quota_bytes` for `IOPSicle/media` > 85% (warning), > 95% (critical) | 15m |
-| Jellyfin external | blackbox probe of Pangolin's edge IP with Host `jellyfin.koutoulastha.dev`, expecting 200 `Healthy` from `/health` — end to end through the Newt tunnel, which no existing probe covers | existing `BlackboxProbeFailed` |
+| Jellyfin external | blackbox probe of Pangolin's edge IP with Host `jellyfin.koutoulastha.dev`, expecting the edge's 302 to Pangolin's auth page (fails on 200 = SSO switched off). Edge + cert + auth gate; does not reach the Newt tunnel | existing `BlackboxProbeFailed` |
 
 The generic `BlackboxProbeFailed` (critical, 5m) excludes the port-forward
 probe, which has its own warning-level alert above.

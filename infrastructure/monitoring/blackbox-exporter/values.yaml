@@ -72,20 +72,23 @@ config:
           - '"port":[1-9]'
         preferred_ip_protocol: ip4
 
-    # Jellyfin through Pangolin's public edge, by IP (like http_2xx_pangolin),
-    # but this resource has Pangolin auth disabled, so the request is proxied
-    # through the Newt tunnel to Jellyfin itself: 200 + "Healthy" proves the
-    # whole path. A 302 here means Pangolin auth was re-enabled on the
-    # resource. Used by apps/media/jellyfin/probe.yaml.
+    # Jellyfin's public edge, by IP (like http_2xx_pangolin). Pangolin SSO is
+    # deliberately ON for this resource, so a cold request must be answered by
+    # the edge with a 302 to Pangolin's auth page. Success = the edge, its
+    # certificate for this hostname, and the auth gate are all in place.
+    # A 200 FAILS this probe on purpose: it means SSO was switched off and
+    # Jellyfin is reachable without Pangolin's login. Like http_2xx_pangolin,
+    # this does not reach the Newt tunnel. Used by apps/media/jellyfin/probe.yaml.
     http_jellyfin_pangolin:
       prober: http
       timeout: 10s
       http:
         valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
-        valid_status_codes: [200]
+        valid_status_codes: [302]
         follow_redirects: false
-        fail_if_body_not_matches_regexp:
-          - Healthy
+        fail_if_header_not_matches:
+          - header: Location
+            regexp: '^https://app\.pangolin\.net/auth/resource/'
         preferred_ip_protocol: ip4
         headers:
           Host: jellyfin.koutoulastha.dev
