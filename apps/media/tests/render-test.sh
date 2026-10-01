@@ -150,7 +150,7 @@ test_jellyfin() {
   eq "jellyfin: probes /health"          "$f" "$dep | $a | .readinessProbe.httpGet.path" "/health"
   eq "jellyfin: library read-only"       "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data/media\") | .readOnly" "true"
   eq "jellyfin: library is media/ only"  "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data/media\") | .subPath" "media"
-  eq "jellyfin: backups over /config/backups" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/config/backups\") | .subPath" "backups/jellyfin"
+  eq "jellyfin: backups over /config/data/backups" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/config/data/backups\") | .subPath" "backups/jellyfin"
   eq "jellyfin: cache capped"            "$f" "$dep | .spec.template.spec.volumes[] | select(.name == \"cache\") | .emptyDir.sizeLimit" "20Gi"
 }
 

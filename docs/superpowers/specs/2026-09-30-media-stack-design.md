@@ -147,7 +147,7 @@ qBittorrent, Sonarr and Radarr mount the whole PVC at `/data` (identical
 paths everywhere, no remote path mappings, hardlinks work). Prowlarr mounts
 only `backups/prowlarr` at `/data/backups/prowlarr`. Jellyfin mounts
 `/data/media` read-only via `subPath`, and `backups/jellyfin` over
-`/config/backups`.
+`/config/data/backups`.
 
 ### Per-app config PVCs
 
@@ -190,8 +190,9 @@ Prowlarr/Sonarr/Radarr 5Gi each, Jellyfin 20Gi. Expandable later.
   `sizeLimit`; `/data/media` read-only.
 - Libraries: Movies `/data/media/movies`, Shows `/data/media/tv`.
 - Backups: Jellyfin 12's backup folder is fixed at `<data dir>/backups`
-  (`/config/backups`) and it has no backup schedule. The NFS
-  `backups/jellyfin` directory is mounted over `/config/backups`; backups are
+  (`/config/data/backups` — the data dir is `/config/data`) and it has no
+  backup schedule. The NFS `backups/jellyfin` directory is mounted over
+  `/config/data/backups`; backups are
   taken by hand from the Dashboard after significant changes.
 - HTTPRoute `jellyfin.koutoulastha.dev` (LAN).
 - Pangolin resource (manual, runbook): `jellyfin.koutoulastha.dev`, site

@@ -86,6 +86,8 @@ persistence:
         subPath: media
         readOnly: true
       # Jellyfin's backup folder is fixed at <data dir>/backups and cannot be
-      # configured, so the NFS backups directory is mounted over it.
-      - path: /config/backups
+      # configured, so the NFS backups directory is mounted over it. The data
+      # dir is /config/data (JELLYFIN_DATA_DIR=/config is the *program* data
+      # dir; DataPath = <that>/data), confirmed from the backup log paths.
+      - path: /config/data/backups
         subPath: backups/jellyfin
