@@ -81,13 +81,49 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   enforce it) — check the pool has room first.
 - **Backups:** Prowlarr/Sonarr/Radarr write scheduled backups to
   `/data/backups/<app>`; Jellyfin backups are manual (*Dashboard → Backups*)
-  and land in `/data/backups/jellyfin` (mounted over `/config/backups`). The
+  and land in `/data/backups/jellyfin` (mounted over `/config/data/backups`). The
   media library itself is deliberately not backed up.
 - **Prowlarr → Sonarr/Radarr** (*Settings → Apps*) must use `http://sonarr:8989`
   and `http://radarr:7878`. Prowlarr's global proxy bypasses only dotless
   hostnames, so `sonarr.media.svc` would be sent into gluetun's proxy and fail.
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
+
+## First-start gotchas (found during the 2026-10-01 rollout)
+
+- **\*arr logins:** the values force forms auth via env, so the apps skip
+  their "create user" screen and start locked. Set the user through the API
+  with the pre-seeded key:
+  ```bash
+  set_login() {  # app, api-version (sonarr/radarr v3, prowlarr v1)
+    local app=$1 v=$2 key user pass
+    key=$(kubectl -n media exec deploy/$app -- printenv "${app^^}__AUTH__APIKEY")
+    read -rp "$app username: " user; read -rsp "$app password: " pass; echo
+    curl -sk -H "X-Api-Key: $key" "https://$app.koutoulastha.dev/api/$v/config/host" \
+      | jq --arg u "$user" --arg p "$pass" '.username=$u | .password=$p | .passwordConfirmation=$p' \
+      | curl -sk -o /dev/null -w "$app %{http_code}\n" -X PUT -H "X-Api-Key: $key" \
+          -H 'Content-Type: application/json' -d @- "https://$app.koutoulastha.dev/api/$v/config/host"
+  }
+  ```
+- **\*arr backup folder** is under *Settings → General → Backups*, visible
+  only with **Show Advanced** on (or set `backupFolder` through the same
+  `config/host` API).
+- **Jellyfin transcode path** must be a subdirectory such as
+  `/cache/transcodes` (the default). Setting it to `/cache` itself makes
+  Jellyfin 12 refuse to start (`found marker for /cache/.jellyfin-cache`); fix
+  by editing `TranscodingTempPath` in `/config/config/encoding.xml`.
+- **Jellyfin networking:** Known proxies `10.244.0.0/16` (pod network — Traefik
+  and Newt connect from it); LAN networks = home subnets only
+  (`192.168.20.0/24`, `192.168.88.0/24`), never the pod network.
+- **Pangolin resource for Jellyfin:** every option under *Authentication* off.
+  A 302 to `app.pangolin.net/auth/...` (probe `jellyfin-public` failing) means
+  auth is still on; a browser with a Pangolin session hides this, the native
+  apps do not.
+- **Containers ship BusyBox `wget`:** no `-e`, and it cannot tunnel `https://`
+  through a proxy — test the proxy with `http_proxy=… wget http://…`.
+- **Editing a registered `application.yaml`** (including
+  `infrastructure/cicd/argocd/application.yaml`) needs a re-`kubectl apply`;
+  Argo CD reads the Application spec from the live object, not git.
 
 ## Known, accepted risk
 

@@ -116,7 +116,7 @@ devbox run -- yq '.metadata.namespace + " " + .metadata.labels["argocd.argoproj.
 ```
 Expected: `{httproute.yaml,repo-bjw-s-labs.yaml}` and `argocd repository true`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Commit** (after the PR merges, the user must re-apply `kubectl apply -f infrastructure/cicd/argocd/application.yaml` — Argo CD reads the include glob from the live Application, so the Secret is not synced until then)
 
 ```bash
 git add infrastructure/cicd/argocd/
@@ -289,7 +289,7 @@ test_jellyfin() {
   eq "jellyfin: probes /health"          "$f" "$dep | $a | .readinessProbe.httpGet.path" "/health"
   eq "jellyfin: library read-only"       "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data/media\") | .readOnly" "true"
   eq "jellyfin: library is media/ only"  "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data/media\") | .subPath" "media"
-  eq "jellyfin: backups over /config/backups" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/config/backups\") | .subPath" "backups/jellyfin"
+  eq "jellyfin: backups over /config/data/backups" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/config/data/backups\") | .subPath" "backups/jellyfin"
   eq "jellyfin: cache capped"            "$f" "$dep | .spec.template.spec.volumes[] | select(.name == \"cache\") | .emptyDir.sizeLimit" "20Gi"
 }
 
@@ -1753,7 +1753,7 @@ persistence:
         readOnly: true
       # Jellyfin's backup folder is fixed at <data dir>/backups and cannot be
       # configured, so the NFS backups directory is mounted over it.
-      - path: /config/backups
+      - path: /config/data/backups
         subPath: backups/jellyfin
 ```
 
@@ -1927,7 +1927,7 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   enforce it) — check the pool has room first.
 - **Backups:** Prowlarr/Sonarr/Radarr write scheduled backups to
   `/data/backups/<app>`; Jellyfin backups are manual (*Dashboard → Backups*)
-  and land in `/data/backups/jellyfin` (mounted over `/config/backups`). The
+  and land in `/data/backups/jellyfin` (mounted over `/config/data/backups`). The
   media library itself is deliberately not backed up.
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
@@ -2149,20 +2149,20 @@ for h in prowlarr sonarr radarr; do curl -sk -o /dev/null -w "$h %{http_code}\n"
 ```
 Expected: three rollouts complete; each host answers `200` or `302` (login page).
 
-- [ ] **Step 2: First login** — each UI asks to create its forms-login user on first visit. Use strong, distinct passwords.
+- [ ] **Step 2: First login** — forms auth is forced by env, so the apps skip their create-user screen and start locked. Set each user via the API with the pre-seeded key — `set_login` in `apps/media/README.md` (*First-start gotchas*). Use strong, distinct passwords.
 
 - [ ] **Step 3: Sonarr and Radarr → qBittorrent and root folders**
 
-In **Sonarr** *Settings → Download Clients → + → qBittorrent*: host `qbittorrent.media.svc`, port `8080`, username `admin`, the password from Task 10 Step 4, category `tv`. **Test**, save. *Settings → Media Management*: *Root Folders → Add* `/data/media/tv`; **Use Hardlinks instead of Copy** on (default). *Settings → General → Backups*: folder `/data/backups/sonarr`, interval 7 days.
+In **Sonarr** *Settings → Download Clients → + → qBittorrent*: host `qbittorrent.media.svc`, port `8080`, username `admin`, the password from Task 10 Step 4, category `tv`. **Test**, save. *Settings → Media Management*: *Root Folders → Add* `/data/media/tv`; **Use Hardlinks instead of Copy** on (default). *Settings → General → Backups* (turn on **Show Advanced**): folder `/data/backups/sonarr`, interval 7 days.
 In **Radarr**: same, category `movies`, root folder `/data/media/movies`, backup folder `/data/backups/radarr`.
 
 - [ ] **Step 4: Prowlarr → proxy, then prove the bypass fails**
 
-*Settings → General → Proxy*: enabled, type **HTTP(S)**, hostname `qbittorrent.media.svc`, port `8888`, **Bypass Proxy for Local Addresses** on. Save. *Settings → General → Backups*: folder `/data/backups/prowlarr`. Then:
+*Settings → General → Proxy*: enabled, type **HTTP(S)**, hostname `qbittorrent.media.svc`, port `8888`, **Bypass Proxy for Local Addresses** on. Save. *Settings → General → Backups* (turn on **Show Advanced**): folder `/data/backups/prowlarr`. Then:
 
 ```bash
 kubectl -n media exec deploy/prowlarr -- sh -c 'wget -T 5 -qO- https://ipinfo.io/ip || echo BLOCKED'
-kubectl -n media exec deploy/prowlarr -- sh -c 'wget -T 10 -qO- -e use_proxy=yes -e https_proxy=http://qbittorrent.media.svc:8888 https://ipinfo.io/ip'
+kubectl -n media exec deploy/prowlarr -- sh -c 'http_proxy=http://qbittorrent.media.svc:8888 wget -T 10 -qO- http://ipinfo.io/ip'
 ```
 Expected: `BLOCKED` (Cilium: no direct egress); the proxied request prints the Proton IP from Task 10.
 
@@ -2201,7 +2201,7 @@ Find the pod CIDR:
 kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.ipam} {.data.cluster-pool-ipv4-cidr}'; echo
 kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'; echo
 ```
-Use `cluster-pool-ipv4-cidr` when `ipam` is `cluster-pool`; otherwise the nodes' `podCIDR`s. *Dashboard → Networking*: **Known proxies** = that CIDR; **LAN networks** = `192.168.20.0/24` (home LAN only — never the pod CIDR). Save, restart Jellyfin (*Dashboard → Restart*). *Dashboard → Users → admin → Profile*: untick **Allow remote connections to this server**. *Dashboard → Playback → Transcoding*: confirm the transcode path is under `/cache`.
+Use `cluster-pool-ipv4-cidr` when `ipam` is `cluster-pool`; otherwise the nodes' `podCIDR`s. *Dashboard → Networking*: **Known proxies** = that CIDR; **LAN networks** = `192.168.20.0/24` (home LAN only — never the pod CIDR). Save, restart Jellyfin (*Dashboard → Restart*). *Dashboard → Users → admin → Profile*: untick **Allow remote connections to this server**. *Dashboard → Playback → Transcoding*: leave the transcode path at `/cache/transcodes` — **never `/cache` itself** (Jellyfin 12 then refuses to start).
 
 - [ ] **Step 4: Pangolin resource**
 
@@ -2215,7 +2215,7 @@ curl -s 'http://localhost:9090/api/v1/query?query=probe_success%7Bpath%3D%22jell
 ```
 Expected: `Healthy` via the public edge; probe value `1` (allow two minutes after the resource goes live). From a phone on mobile data, a non-admin user can sign in and play; the admin user is refused remotely.
 
-- [ ] **Step 6: First manual backup** — *Dashboard → Backups → Create*. Then `kubectl -n media exec deploy/jellyfin -- ls /config/backups` lists the archive (it lives on NFS under `backups/jellyfin`).
+- [ ] **Step 6: First manual backup** — *Dashboard → Backups → Create*. Then `kubectl -n media exec deploy/jellyfin -- ls /config/data/backups` lists the archive (it lives on NFS under `backups/jellyfin`).
 
 ---
 
