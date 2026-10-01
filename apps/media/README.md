@@ -37,7 +37,8 @@ kubectl apply -f apps/media/jellyfin/application.yaml
   only its `PrivateKey` is used, sealed in `qbittorrent/sealed-secret.yaml`.
 - **Pangolin Cloud:** HTTP resource `jellyfin.koutoulastha.dev`, site
   `main-tunnel`, target `http://jellyfin.media.svc.cluster.local:8096`,
-  **Pangolin auth disabled** (TV/phone apps cannot pass SSO).
+  **Pangolin SSO on** (decided 2026-10-01). Remote access is browser-only;
+  the Jellyfin TV/phone apps cannot pass SSO and work on the LAN only.
 - **App UIs:** logins, download clients, root folders, Prowlarr proxy and app
   sync, backups folders, Jellyfin networking. Stored in each app's SQLite on
   its `/config` volume.
@@ -115,10 +116,11 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
 - **Jellyfin networking:** Known proxies `10.244.0.0/16` (pod network — Traefik
   and Newt connect from it); LAN networks = home subnets only
   (`192.168.20.0/24`, `192.168.88.0/24`), never the pod network.
-- **Pangolin resource for Jellyfin:** every option under *Authentication* off.
-  A 302 to `app.pangolin.net/auth/...` (probe `jellyfin-public` failing) means
-  auth is still on; a browser with a Pangolin session hides this, the native
-  apps do not.
+- **Pangolin resource for Jellyfin:** SSO stays **on**. The `jellyfin-public`
+  probe expects the edge's 302 to `app.pangolin.net/auth/...`; it failing with
+  a 200 means SSO was switched off and Jellyfin is exposed without it. To
+  support native apps remotely instead, turn SSO off *and* change the
+  `http_jellyfin_pangolin` module back to expecting `200` + `Healthy`.
 - **Containers ship BusyBox `wget`:** no `-e`, and it cannot tunnel `https://`
   through a proxy — test the proxy with `http_proxy=… wget http://…`.
 - **Editing a registered `application.yaml`** (including

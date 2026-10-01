@@ -1,9 +1,10 @@
-# Jellyfin through Pangolin, end to end: edge -> Newt tunnel -> Jellyfin.
+# Jellyfin's Pangolin resource: edge + certificate + SSO gate.
 #
-# Unlike the pangolin-tunnel probe (which stops at the edge's auth redirect),
-# this resource has Pangolin auth disabled, so a 200 "Healthy" can only come
-# from Jellyfin itself. This is the one probe that notices a dead Newt tunnel.
-# A 302 means someone re-enabled Pangolin auth on the resource.
+# Pangolin SSO is kept ON for this resource (decided 2026-10-01: extra
+# security; remote access is browser-only, native apps cannot pass SSO). The
+# module therefore expects the edge's 302 to app.pangolin.net/auth/... and
+# fails on a 200, which would mean SSO was turned off. It does not prove the
+# Newt tunnel to Jellyfin is up.
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
 metadata:
