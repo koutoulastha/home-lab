@@ -23,9 +23,13 @@ spec:
     # This Application owns the `media` namespace and its metadata; the app
     # Applications do not set CreateNamespace, so they cannot contend over it.
     # privileged: gluetun needs NET_ADMIN, which the cluster-default
-    # `baseline` Pod Security Standard rejects.
+    # `baseline` Pod Security Standard rejects. warn/audit match enforce:
+    # Talos defaults them to `restricted`, which only produced noise on every
+    # qbittorrent rollout.
     managedNamespaceMetadata:
       labels:
         pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
     syncOptions:
       - CreateNamespace=true

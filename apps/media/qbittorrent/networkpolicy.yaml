@@ -9,7 +9,7 @@
 #
 # Ingress, per port:
 #   8080  web UI/API   — Traefik (the LAN route) and Sonarr/Radarr
-#   8888  HTTP proxy   — Prowlarr only
+#   8888  HTTP proxy   — Prowlarr and FlareSolverr
 #   8000  control srv  — blackbox-exporter only (port-forward probe)
 #   9999  health srv   — the node (kubelet probes)
 apiVersion: cilium.io/v2
@@ -43,6 +43,8 @@ spec:
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: prowlarr
+        - matchLabels:
+            app.kubernetes.io/name: flaresolverr
       toPorts:
         - ports:
             - port: "8888"
