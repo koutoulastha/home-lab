@@ -8,6 +8,7 @@ Jellyfin serves the library. Design: `docs/superpowers/specs/2026-09-30-media-st
 | (storage) | `media-storage` | — | PVC `media/media-data` |
 | qBittorrent + gluetun | `qbittorrent` | https://qbittorrent.koutoulastha.dev | `qbittorrent.media.svc` :8080 web, :8888 proxy, :8000 gluetun control |
 | Prowlarr | `prowlarr` | https://prowlarr.koutoulastha.dev | `prowlarr.media.svc:9696` |
+| FlareSolverr | `flaresolverr` | — (Prowlarr only) | `flaresolverr.media.svc:8191` |
 | Sonarr | `sonarr` | https://sonarr.koutoulastha.dev | `sonarr.media.svc:8989` |
 | Radarr | `radarr` | https://radarr.koutoulastha.dev | `radarr.media.svc:7878` |
 | Jellyfin | `jellyfin` | https://jellyfin.koutoulastha.dev (also public via Pangolin) | `jellyfin.media.svc:8096` |
@@ -22,6 +23,7 @@ apps do not create the namespace.
 kubectl apply -f apps/media/storage/application.yaml
 kubectl apply -f apps/media/qbittorrent/application.yaml   # then run the leak tests below
 kubectl apply -f apps/media/prowlarr/application.yaml
+kubectl apply -f apps/media/flaresolverr/application.yaml
 kubectl apply -f apps/media/sonarr/application.yaml
 kubectl apply -f apps/media/radarr/application.yaml
 kubectl apply -f apps/media/jellyfin/application.yaml
@@ -49,8 +51,8 @@ kubectl apply -f apps/media/jellyfin/application.yaml
    nothing out except the WireGuard tunnel.
 2. qBittorrent binds to `tun0` (`Session\Interface` in the seeded config).
 3. `qbittorrent/networkpolicy.yaml`: Cilium lets the pod reach the internet on
-   UDP 51820 only. Prowlarr has no internet egress at all; it uses gluetun's
-   HTTP proxy.
+   UDP 51820 only. Prowlarr and FlareSolverr have no internet egress at all;
+   both use gluetun's HTTP proxy.
 
 DNS for the pod goes to gluetun's resolver on 127.0.0.1 (DNS over TLS inside
 the tunnel).
@@ -87,6 +89,14 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
 - **Prowlarr → Sonarr/Radarr** (*Settings → Apps*) must use `http://sonarr:8989`
   and `http://radarr:7878`. Prowlarr's global proxy bypasses only dotless
   hostnames, so `sonarr.media.svc` would be sent into gluetun's proxy and fail.
+- **Cloudflare-protected indexers** (e.g. 1337x): in Prowlarr, *Settings →
+  Indexers → + → FlareSolverr*, host `http://flaresolverr:8191/` (dotless, so
+  it bypasses the proxy), tag `flaresolverr`; give that tag to the indexer.
+  Prowlarr passes its proxy on to FlareSolverr, so the solve exits via Proton.
+  Expect some challenges to stay unsolved — Cloudflare often wins.
+  Check: `kubectl -n media logs deploy/flaresolverr` shows the solve, and
+  `kubectl -n media exec deploy/flaresolverr -- python -c "import urllib.request as u;print(u.urlopen('http://1.1.1.1',timeout=5))"`
+  must fail (no direct egress).
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
 
@@ -133,3 +143,11 @@ gluetun's HTTP proxy and qBittorrent share a pod, and qBittorrent skips auth
 for localhost (gluetun needs that to set the forwarded port). A client of the
 proxy could therefore reach qBittorrent's API unauthenticated. Only Prowlarr
 can reach the proxy (Cilium), and Prowlarr is LAN-only behind a login.
+
+FlareSolverr can reach the proxy too (decided 2026-10-05), and it runs
+JavaScript from indexer sites in Chrome (with certificate errors ignored, as
+upstream configures it). A malicious page could send requests through the
+proxy to `127.0.0.1:8080` and drive qBittorrent's API. gluetun's proxy does
+not filter private destinations. Accepted as low likelihood; the fix, if
+needed, is a qBittorrent API key (5.2+) for gluetun's port-update command and
+`WebUI\LocalHostAuth=true`.

@@ -102,7 +102,7 @@ test_qbittorrent() {
   eq "CNP: exactly one egress rule"         "$np" '.spec.egress | length' "1"
   eq "CNP: egress only to world"            "$np" '.spec.egress[0].toEntities[0]' "world"
   eq "CNP: egress only UDP 51820"           "$np" '.spec.egress[0].toPorts[0].ports[0].port + "/" + .spec.egress[0].toPorts[0].ports[0].protocol' "51820/UDP"
-  eq "CNP: proxy only from prowlarr"        "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8888") | .fromEndpoints[0].matchLabels["app.kubernetes.io/name"]' "prowlarr"
+  eq "CNP: proxy only from prowlarr+flaresolverr" "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8888") | [.fromEndpoints[].matchLabels["app.kubernetes.io/name"]] | sort | join(",")' "flaresolverr,prowlarr"
 }
 
 arr_checks() {
@@ -140,6 +140,33 @@ test_prowlarr() {
   eq "prowlarr CNP: no world egress"     "$np" '[.spec.egress[] | select(has("toEntities") or has("toCIDR") or has("toCIDRSet") or has("toFQDNs"))] | length' "0"
   eq "prowlarr CNP: may reach the proxy" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "qbittorrent") | .toPorts[0].ports[0].port' "8888"
   eq "prowlarr: backups subPath only"    "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data/backups/prowlarr\") | .subPath" "backups/prowlarr"
+  eq "prowlarr CNP: may reach flaresolverr" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "flaresolverr") | .toPorts[0].ports[0].port' "8191"
+}
+
+test_flaresolverr() {
+  local f; f=$(render flaresolverr)
+  local dep='select(.kind == "Deployment")'
+  local a='.spec.template.spec.containers[] | select(.name == "app")'
+  eq "flaresolverr: Recreate strategy"    "$f" "$dep | .spec.strategy.type" "Recreate"
+  eq "flaresolverr: Service name"         "$f" 'select(.kind == "Service") | .metadata.name' "flaresolverr"
+  eq "flaresolverr: Service port"         "$f" 'select(.kind == "Service") | .spec.ports[0].port' "8191"
+  # Empty output = no document of that kind rendered.
+  eq "flaresolverr: no HTTPRoute"         "$f" 'select(.kind == "HTTPRoute") | .kind' ""
+  eq "flaresolverr: no PVC"               "$f" 'select(.kind == "PersistentVolumeClaim") | .kind' ""
+  # The image's user is named, not numeric; runAsNonRoot needs the UID.
+  eq "flaresolverr: runs as image UID"    "$f" "$dep | $a | .securityContext.runAsUser" "1000"
+  eq "flaresolverr: non-root"             "$f" "$dep | $a | .securityContext.runAsNonRoot" "true"
+  eq "flaresolverr: drops all caps"       "$f" "$dep | $a | .securityContext.capabilities.drop[0]" "ALL"
+  eq "flaresolverr: probes /health"       "$f" "$dep | $a | .readinessProbe.httpGet.path" "/health"
+  eq "flaresolverr: fallback proxy"       "$f" "$dep | $a | .env[] | select(.name == \"PROXY_URL\") | .value" "http://qbittorrent:8888"
+  eq "flaresolverr: memory limit"         "$f" "$dep | $a | .resources.limits.memory" "1Gi"
+  local np="$MEDIA/flaresolverr/networkpolicy.yaml"
+  eq "flaresolverr CNP: selects flaresolverr" "$np" '.spec.endpointSelector.matchLabels["app.kubernetes.io/name"]' "flaresolverr"
+  eq "flaresolverr CNP: no world egress"  "$np" '[.spec.egress[] | select(has("toEntities") or has("toCIDR") or has("toCIDRSet") or has("toFQDNs"))] | length' "0"
+  eq "flaresolverr CNP: egress = dns + proxy" "$np" '[.spec.egress[].toEndpoints[0].matchLabels | (.["k8s-app"] // .["app.kubernetes.io/name"])] | sort | join(",")' "kube-dns,qbittorrent"
+  eq "flaresolverr CNP: proxy port"       "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "qbittorrent") | .toPorts[0].ports[0].port' "8888"
+  eq "flaresolverr CNP: ingress only prowlarr" "$np" '[.spec.ingress[].fromEndpoints[].matchLabels["app.kubernetes.io/name"]] | join(",")' "prowlarr"
+  eq "flaresolverr CNP: ingress port"     "$np" '.spec.ingress[0].toPorts[0].ports[0].port' "8191"
 }
 
 test_jellyfin() {
@@ -167,6 +194,8 @@ test_storage() {
   eq "PVC: never pruned or deleted"   "$d/pvc.yaml" '.metadata.annotations["argocd.argoproj.io/sync-options"]' "Prune=false,Delete=false"
   eq "App: prune disabled"            "$d/application.yaml" '.spec.syncPolicy.automated.prune' "false"
   eq "App: namespace is privileged"   "$d/application.yaml" '.spec.syncPolicy.managedNamespaceMetadata.labels["pod-security.kubernetes.io/enforce"]' "privileged"
+  eq "App: no restricted warnings"    "$d/application.yaml" '.spec.syncPolicy.managedNamespaceMetadata.labels["pod-security.kubernetes.io/warn"]' "privileged"
+  eq "App: no restricted audit"       "$d/application.yaml" '.spec.syncPolicy.managedNamespaceMetadata.labels["pod-security.kubernetes.io/audit"]' "privileged"
   eq "App: creates the namespace"     "$d/application.yaml" '.spec.syncPolicy.syncOptions[0]' "CreateNamespace=true"
   contains "Alert: watches IOPSicle/media" "$d/alertrules.yaml" '.spec.groups[0].rules[0].expr' 'dataset="IOPSicle/media"'
 }

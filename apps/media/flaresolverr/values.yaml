@@ -1,0 +1,67 @@
+# FlareSolverr: a headless Chrome that Prowlarr hands Cloudflare-protected
+# indexer requests to. Values for bjw-s app-template 5.2.1 (checked by
+# apps/media/tests/render-test.sh).
+#
+# Its traffic leaves through gluetun's HTTP proxy in the qbittorrent pod, so
+# it exits via Proton like Prowlarr's own. Prowlarr sends its global proxy
+# with every request (Prowlarr's FlareSolverr.cs); PROXY_URL below is the
+# fallback when a request carries none. networkpolicy.yaml gives this pod no
+# internet egress, so a request that skips the proxy fails instead of leaking.
+controllers:
+  flaresolverr:
+    strategy: Recreate
+    containers:
+      app:
+        image:
+          repository: ghcr.io/flaresolverr/flaresolverr
+          tag: v3.5.2@sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767
+        env:
+          # Dotless: resolved through the pod's search path to the Service.
+          PROXY_URL: http://qbittorrent:8888
+        probes:
+          # /health answers {"status":"ok"} and is not logged.
+          liveness: &probe
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /health, port: 8191}
+              periodSeconds: 30
+              failureThreshold: 5
+          readiness: *probe
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /health, port: 8191}
+              periodSeconds: 5
+              failureThreshold: 24
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          # Chrome grows per open challenge; cap it so a stuck solve is
+          # OOM-killed and restarted rather than starving the node.
+          limits:
+            memory: 1Gi
+        # The image's user (flaresolverr) is named, not numeric — runAsNonRoot
+        # needs the UID. Root filesystem stays writable: the driver patcher
+        # and Chrome's profile write under /app.
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+
+service:
+  app:
+    controller: flaresolverr
+    ports:
+      http:
+        port: 8191
+
+persistence:
+  tmp:
+    type: emptyDir
+    globalMounts:
+      - path: /tmp
