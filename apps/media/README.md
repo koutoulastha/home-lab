@@ -136,6 +136,18 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
 - **Editing a registered `application.yaml`** (including
   `infrastructure/cicd/argocd/application.yaml`) needs a re-`kubectl apply`;
   Argo CD reads the Application spec from the live object, not git.
+- **Namespace labels** (`managedNamespaceMetadata` in
+  `storage/application.yaml`): re-applying is not enough. Argo CD does not
+  track the namespace, so nothing goes OutOfSync and auto-sync never runs;
+  a manual sync touches the namespace only if it carries `CreateNamespace=true`:
+  ```bash
+  kubectl -n argocd patch application media-storage --type merge \
+    -p '{"operation":{"sync":{"revision":"main","syncOptions":["CreateNamespace=true"]}}}'
+  ```
+- **Prowlarr's proxy must have no username/password** (*Settings → General →
+  Proxy*). gluetun's proxy has no auth, and Prowlarr forwards the credentials
+  to FlareSolverr, which logs every request body (including them) at INFO —
+  into Loki.
 
 ## Known, accepted risk
 
