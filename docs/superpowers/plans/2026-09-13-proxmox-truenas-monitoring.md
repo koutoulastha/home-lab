@@ -2300,6 +2300,8 @@ Replace the "Storage and retention" section's placeholder sentence — *"No volu
 
 The TrueNAS exporter ships its own dashboards (Dataset Deep Dive, Disks and Temperatures) in its repository. For the PVE side, Grafana dashboard **10347** (Proxmox via pve-exporter) and **1860** (Node Exporter Full) cover the metrics collected here.
 
+> **Superseded for the PVE side (2026-10-06):** 10347 and 1860 are no longer imported by hand. They are provisioned from git as sidecar ConfigMaps in `infrastructure/monitoring/pve-exporter/dashboards/` — see its `kustomization.yaml` for the pinned revisions and the one edit 10347 needs.
+
 Dashboards are last deliberately: a dashboard built before the metrics are verified encodes whatever the metrics happened to mean that day.
 
 - [ ] **Step 5: Commit**
