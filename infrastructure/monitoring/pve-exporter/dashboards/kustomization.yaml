@@ -1,0 +1,51 @@
+# Grafana dashboards for the Proxmox hosts, provisioned from git rather than
+# imported by hand, so they survive a lost Grafana PVC.
+#
+# Picked up by the dashboard sidecar kube-prometheus-stack already runs, which
+# watches every namespace for ConfigMaps labelled grafana_dashboard: "1"
+# (chart defaults, not overridden in kube-prometheus-stack/values.yaml).
+#
+# This directory is a SECOND SOURCE on the pve-exporter Application, not part
+# of its directory source — ArgoCD does not recurse into subdirectories of a
+# directory app, so the two never overlap. Deleting the Application removes the
+# dashboards with it.
+#
+# Both JSON files are upstream grafana.com downloads. To update one, download
+# the new revision and re-apply the edit noted below:
+#
+#   curl -sL https://grafana.com/api/dashboards/<id>/revisions/<rev>/download
+#
+#   proxmox-10347.json         — "Proxmox via Prometheus", 10347 rev 5.
+#     ONE EDIT: every ${DS_PROMETHEUS} replaced with a ${ds_prometheus}
+#     datasource template variable (copied from 1860), and __inputs dropped.
+#     ${DS_PROMETHEUS} is an import-time placeholder that only the UI import
+#     dialog fills in; provisioned as-is, every panel reports "datasource not
+#     found".
+#     QUIRK: both pve-exporter targets scrape with cluster=1, so each reports
+#     the cluster-wide guest and storage series under its own `instance`. The
+#     dashboard's instance dropdown therefore means "whose API answered", not
+#     "which node" — either choice shows the whole cluster, once.
+#
+#   node-exporter-full-1860.json — "Node Exporter Full", 1860 rev 45.
+#     Unmodified; it already selects its datasource through a variable. Pick
+#     job=pve-nodes to see m8 and pve2. At ~470KB it exceeds the 256KB
+#     last-applied annotation limit, which is fine only because the
+#     Application syncs with ServerSideApply=true.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+generatorOptions:
+  # Stable names: the sidecar keys dashboards by file, not ConfigMap name, but
+  # a hash suffix would make every JSON edit a delete-and-recreate under prune.
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+
+configMapGenerator:
+  - name: grafana-dashboard-proxmox
+    files:
+      - proxmox-10347.json
+  - name: grafana-dashboard-node-exporter-full
+    files:
+      - node-exporter-full-1860.json

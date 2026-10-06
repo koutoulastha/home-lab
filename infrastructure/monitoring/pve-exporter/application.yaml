@@ -14,6 +14,11 @@ spec:
       path: infrastructure/monitoring/pve-exporter
       directory:
         exclude: '{application.yaml,values.yaml}'
+    # Grafana dashboards (kustomize configMapGenerator). Not reached by the
+    # source above — directory sources do not recurse into subdirectories.
+    - repoURL: https://github.com/koutoulastha/home-lab.git
+      targetRevision: main
+      path: infrastructure/monitoring/pve-exporter/dashboards
   syncPolicy:
     automated:
       prune: true
