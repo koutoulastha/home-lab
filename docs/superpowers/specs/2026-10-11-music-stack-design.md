@@ -66,8 +66,8 @@ Changes to existing files:
 ## 2. Navidrome
 
 `apps/media/navidrome/` — `application.yaml`, `values.yaml`,
-`networkpolicy.yaml`, `probe.yaml`, plus `sealed-secret.yaml` only if a
-Last.fm key turns out to be required (see Open checks).
+`networkpolicy.yaml`, `probe.yaml`, `sealed-secret.yaml` (Last.fm API key and
+secret — Navidrome ships no default key, see Upstream facts).
 
 - Image `ghcr.io/navidrome/navidrome:0.64.2`, pinned by digest; port 4533;
   `Recreate` strategy.
@@ -83,16 +83,21 @@ Last.fm key turns out to be required (see Open checks).
     scheduled scan is what picks up Lidarr's imports
   - `ND_AGENTS=deezer,lastfm` — artist images and biographies
   - `ND_ENABLEINSIGHTSCOLLECTOR=false`, `ND_ENABLESHARING=false`
-  - `ND_REVERSEPROXYWHITELIST` **must stay unset**: it enables header-based
-    login for any client in the whitelist.
+  - `ND_LASTFM_APIKEY`, `ND_LASTFM_SECRET` from sealed secret
+    `navidrome-secret`
+  - `ND_EXTAUTH_TRUSTEDSOURCES` (legacy name `ND_REVERSEPROXYWHITELIST`)
+    **must stay unset**: it enables `Remote-User` header login for requests
+    from the listed proxies, and Traefik and Newt pass that header through
+    from the internet.
 - LAN HTTPRoute `music.koutoulastha.dev` → `traefik-gateway`.
 
 ### Network policy (`CiliumNetworkPolicy navidrome`)
 
 Both directions are restricted (the stack's other policies are egress-only):
 
-- Ingress on 4533 from Traefik (`traefik` namespace) and Newt (`pangolin`
-  namespace) only.
+- Ingress on 4533 from Traefik (`traefik` namespace), Newt (`pangolin`
+  namespace, `app.kubernetes.io/component: newt`) and the node (`host`
+  entity, for kubelet probes — as in qBittorrent's policy) only.
 - Egress: kube-dns on 53; TCP 443 to `0.0.0.0/0` except `10.0.0.0/8`,
   `172.16.0.0/12`, `192.168.0.0/16`. Cilium's `world` entity is not used — it
   includes LAN addresses (TrueNAS, router, Talos nodes).
@@ -126,18 +131,25 @@ Pre-merge:
 - `render-test.sh`: `test_lidarr` (common checks, `/data` mount, auth env);
   `test_navidrome` (common checks with hostname `music.koutoulastha.dev`,
   `/music` read-only with subPath `media/music`, no SA token,
-  `ND_DATAFOLDER=/config`, `ND_AGENTS=deezer,lastfm`, no
-  `ND_REVERSEPROXYWHITELIST`). `common_checks` takes the hostname as a
+  `ND_DATAFOLDER=/config`, `ND_AGENTS=deezer,lastfm`, neither
+  `ND_EXTAUTH_TRUSTEDSOURCES` nor `ND_REVERSEPROXYWHITELIST`). `common_checks` takes the hostname as a
   parameter instead of deriving it from the app name.
 - Network policies: `kubectl apply --dry-run=server`.
 
-Open checks, settled from upstream source during planning, not assumed:
+Upstream facts (checked in the Navidrome v0.64.2 source, 2026-10-11):
 
-1. Whether Navidrome 0.64.2 ships a default Last.fm API key. If not: a free
-   key in `sealed-secret.yaml` as `ND_LASTFM_APIKEY`/`ND_LASTFM_SECRET`.
-2. How Navidrome's login rate limiter identifies clients behind a proxy (all
-   requests arrive from Traefik or Newt). If it keys on the peer address, an
-   attacker can lock out everyone — accepted as a nuisance, documented.
+1. No default Last.fm key: `lastfm.apikey`/`lastfm.secret` default to `""`
+   and the agent constructor returns nil when either is empty. A free key
+   from https://www.last.fm/api/account/create goes in `sealed-secret.yaml`.
+2. Rate limiting keys on the peer address unless `ExtAuth.TrustedSources` is
+   set (`server/middlewares.go` `realIPMiddleware`), and that setting must
+   stay unset (above). Web login (`/auth/login`): 5 attempts per 20 s per
+   peer. Subsonic API: 5 failed attempts per 20 s per peer+username. Behind
+   Traefik/Newt the peer is shared, so an attacker who knows a username can
+   lock that user out for all remote clients — a nuisance, not a breach;
+   documented as accepted risk, mitigated by a long random password.
+3. `/auth/createAdmin` answers until the first user exists — hence admin
+   first.
 
 Rollout (user runs the commands):
 
@@ -159,4 +171,5 @@ Rollout (user runs the commands):
 README updates: table rows for Lidarr and Navidrome, apply commands, Pangolin
 resource under "Things that live outside git", admin-first rule, `set_login`
 note for Lidarr (API v1), Prowlarr → `http://lidarr:8686`, Jellyfin Music
-library, Navidrome's exposure under "Known, accepted risk".
+library, Navidrome's exposure and shared rate-limit bucket under "Known, accepted
+risk".
