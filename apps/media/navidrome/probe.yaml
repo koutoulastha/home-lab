@@ -1,0 +1,21 @@
+# Navidrome's Pangolin resource: edge + certificate + tunnel + Navidrome.
+#
+# Pangolin SSO is OFF for this resource (decided 2026-10-07: Subsonic apps
+# need direct access; Navidrome's own login is the gate). The module expects
+# Navidrome's own 200 "." from /ping and fails on a 302 to Pangolin auth.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: navidrome-public
+  namespace: media
+spec:
+  interval: 60s
+  module: http_navidrome_pangolin
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  targets:
+    staticConfig:
+      static:
+        - https://130.110.2.46/ping
+      labels:
+        path: navidrome-public

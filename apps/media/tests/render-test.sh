@@ -222,6 +222,17 @@ test_navidrome() {
   eq "navidrome CNP: internet excludes LAN" "$np" '.spec.egress[] | select(has("toCIDRSet")) | .toCIDRSet[0].except | sort | join(",")' "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   eq "navidrome CNP: internet is 443 only" "$np" '.spec.egress[] | select(has("toCIDRSet")) | .toPorts[0].ports[0].port + "/" + .toPorts[0].ports[0].protocol' "443/TCP"
   eq "navidrome CNP: egress rule count"   "$np" '.spec.egress | length' "2"
+  local pr="$MEDIA/navidrome/probe.yaml"
+  local bb="$ROOT/infrastructure/monitoring/blackbox-exporter/values.yaml"
+  local mod='.config.modules.http_navidrome_pangolin.http'
+  eq "probe: module"                     "$pr" '.spec.module' "http_navidrome_pangolin"
+  eq "probe: edge /ping"                 "$pr" '.spec.targets.staticConfig.static[0]' "https://130.110.2.46/ping"
+  eq "probe: path label"                 "$pr" '.spec.targets.staticConfig.labels.path' "navidrome-public"
+  eq "module: 200 only"                  "$bb" "$mod.valid_status_codes | join(\",\")" "200"
+  eq "module: no redirects (SSO = fail)" "$bb" "$mod.follow_redirects" "false"
+  eq "module: Host"                      "$bb" "$mod.headers.Host" "music.koutoulastha.dev"
+  eq "module: SNI"                       "$bb" "$mod.tls_config.server_name" "music.koutoulastha.dev"
+  eq "module: body is Navidrome's ping"  "$bb" "$mod.fail_if_body_not_matches_regexp[0]" '^\.$'
 }
 
 test_storage() {

@@ -94,3 +94,25 @@ config:
           Host: jellyfin.koutoulastha.dev
         tls_config:
           server_name: jellyfin.koutoulastha.dev
+
+    # Navidrome's public edge, by IP. Pangolin SSO is deliberately OFF for this
+    # resource (Subsonic phone apps cannot pass it), so the request must go
+    # through the Newt tunnel and be answered by Navidrome's /ping with ".".
+    # Unlike the Jellyfin module, success proves the tunnel end to end.
+    # A 302 to app.pangolin.net FAILS it (SSO switched on: phone apps broken);
+    # a 502 means the tunnel or the pod is down.
+    # Used by apps/media/navidrome/probe.yaml.
+    http_navidrome_pangolin:
+      prober: http
+      timeout: 10s
+      http:
+        valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+        valid_status_codes: [200]
+        follow_redirects: false
+        fail_if_body_not_matches_regexp:
+          - '^\.$'
+        preferred_ip_protocol: ip4
+        headers:
+          Host: music.koutoulastha.dev
+        tls_config:
+          server_name: music.koutoulastha.dev
