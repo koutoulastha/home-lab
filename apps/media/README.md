@@ -112,6 +112,14 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   Check: `kubectl -n media logs deploy/flaresolverr` shows the solve, and
   `kubectl -n media exec deploy/flaresolverr -- python -c "import urllib.request as u;print(u.urlopen('http://1.1.1.1',timeout=5))"`
   must fail (no direct egress).
+- **Music directories** (once, before Lidarr's root folder and before
+  Navidrome's first start — a missing `media/music` subPath would be created
+  by the kubelet as root, which the NFS share squashes):
+  ```bash
+  kubectl -n media run mkdirs --rm -i --restart=Never --image=busybox:1.37 \
+    --overrides='{"spec":{"securityContext":{"runAsUser":568,"runAsGroup":568},"containers":[{"name":"t","image":"busybox:1.37","stdin":true,"command":["sh","-c","mkdir -p /data/torrents/music /data/media/music /data/backups/lidarr && stat -c \"%u:%g %n\" /data/torrents/music /data/media/music /data/backups/lidarr"],"volumeMounts":[{"name":"d","mountPath":"/data"}]}],"volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"media-data"}}]}}'
+  # expect: 568:568 for all three
+  ```
 - **Lidarr:** download client qBittorrent `http://qbittorrent:8080`,
   category `music` (saves to `/data/torrents/music`); root folder
   `/data/media/music`; backups folder `/data/backups/lidarr`.
@@ -119,11 +127,15 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   `/data/media/music` (already mounted read-only — no manifest change).
 - **Navidrome scans hourly** (`ND_SCANNER_SCHEDULE`); inotify does not work
   over NFS. For a new album now: *Settings → Library → Scan* (admin).
-- **Navidrome locked out remotely** (`Too many failed login attempts` in its
-  log): every remote request reaches Navidrome from the Newt pod, so the
-  limiter (5 failures per 20 s per username) is shared by all remote
-  clients. It clears after 20 s of quiet. Do **not** "fix" it with
-  `ND_EXTAUTH_TRUSTEDSOURCES` — see Known, accepted risk.
+- **Navidrome locked out remotely:** every remote request reaches Navidrome
+  from the Newt pod, so its login limiters see one client for everyone
+  outside the LAN. Web UI (`/auth/login`): 5 requests per 20 s per peer, any
+  username — anyone can block all remote web logins, and it answers 429
+  with no log line. Subsonic apps: 5 failures per 20 s per peer+username
+  (`Too many failed login attempts` in the log). Both clear after 20 s of
+  quiet; LAN logins through Traefik are a separate bucket and still work.
+  Do **not** "fix" it with `ND_EXTAUTH_TRUSTEDSOURCES` — see Known, accepted
+  risk.
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
 
@@ -196,8 +208,9 @@ login faces the internet. Mitigations: a long random password per user;
 rate limits on web and Subsonic logins; the library mounted read-only; no
 service-account token; Cilium allows it only DNS and HTTPS to public
 addresses, so a compromise cannot reach qBittorrent, the *arr APIs, TrueNAS
-or the LAN. Because every remote request arrives from the Newt pod, an
-attacker who knows a username can keep that user locked out remotely
-(a nuisance, not a breach). `ND_EXTAUTH_TRUSTEDSOURCES` would restore
+or the LAN. Because every remote request arrives from the Newt pod, anyone
+can keep all remote web logins blocked (5 requests per 20 s, no username
+needed), and an attacker who knows a username can do the same to that
+user's Subsonic apps — a nuisance, not a breach. `ND_EXTAUTH_TRUSTEDSOURCES` would restore
 per-client limits but also enable `Remote-User` header login through Traefik
 and Newt — it must stay unset (the render test enforces this).

@@ -894,7 +894,17 @@ EOF
 
 Merge only after the user approves the PR.
 
-- [ ] **Step 2 (user): Lidarr**
+- [ ] **Step 2 (user): Create the music directories (as 568)**
+
+Nothing creates them otherwise: Lidarr will not add a root folder that does not exist, and a missing `subPath` (Navidrome's `media/music`) is created by the kubelet as root, which the NFS share squashes — the pod then sits in `CreateContainerConfigError`. Same one-off as the 2026-09-30 rollout:
+
+```bash
+kubectl -n media run mkdirs --rm -i --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"securityContext":{"runAsUser":568,"runAsGroup":568},"containers":[{"name":"t","image":"busybox:1.37","stdin":true,"command":["sh","-c","mkdir -p /data/torrents/music /data/media/music /data/backups/lidarr && stat -c \"%u:%g %n\" /data/torrents/music /data/media/music /data/backups/lidarr"],"volumeMounts":[{"name":"d","mountPath":"/data"}]}],"volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"media-data"}}]}}'
+# expect: 568:568 for all three
+```
+
+- [ ] **Step 2b (user): Lidarr**
 
 ```bash
 kubectl apply -f apps/media/lidarr/application.yaml
@@ -923,8 +933,9 @@ First confirm the admin exists — this must return an error, not create a user:
 
 ```bash
 curl -sk -X POST https://music.koutoulastha.dev/auth/createAdmin \
-  -H 'Content-Type: application/json' -d '{"username":"probe","password":"x"}' -w '\n%{http_code}\n'
-# expect: a 403/4xx — anything that returns a token means STOP, the admin step did not happen
+  -H 'Content-Type: application/json' -d '{}' -w '\n%{http_code}\n'
+# expect: 403 "Cannot create another first admin". A 422 means NO user exists yet:
+# STOP, create the admin first. The empty body can never create a user itself.
 ```
 
 Then in Pangolin Cloud create the resource (README *Things that live outside git*), SSO **off**. Check public DNS the same way as Jellyfin's: `dig +short music.koutoulastha.dev @1.1.1.1` returns the Pangolin edge (or its `*.cname.pangolin-ns.net` chain); if empty, add the record exactly as `jellyfin` has it. Then:
