@@ -131,6 +131,13 @@ test_radarr() {
   eq "radarr: /data mounted whole" "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data\") | has(\"subPath\")" "false"
 }
 
+test_lidarr() {
+  arr_checks lidarr 8686
+  local f="$OUT/lidarr.yaml" a='select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "app")'
+  eq "lidarr: /data mounted whole" "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data\") | has(\"subPath\")" "false"
+  eq "lidarr: /data is media-data" "$f" 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "data") | .persistentVolumeClaim.claimName' "media-data"
+}
+
 test_prowlarr() {
   arr_checks prowlarr 9696
   local f="$OUT/prowlarr.yaml" a='select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "app")'
