@@ -2,7 +2,7 @@
 # `world` egress, an indexer that bypasses the proxy fails instead of leaking
 # the home IP.
 #
-# Egress-only: ingress stays default-allow (Traefik, and Sonarr/Radarr, which
+# Egress-only: ingress stays default-allow (Traefik, and Sonarr/Radarr/Lidarr, which
 # fetch Torznab results from Prowlarr on 9696).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -42,6 +42,13 @@ spec:
       toPorts:
         - ports:
             - port: "7878"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: lidarr
+      toPorts:
+        - ports:
+            - port: "8686"
               protocol: TCP
     # FlareSolverr, for Cloudflare-protected indexers (tag `flaresolverr`).
     - toEndpoints:

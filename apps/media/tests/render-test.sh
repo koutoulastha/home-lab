@@ -103,6 +103,7 @@ test_qbittorrent() {
   eq "CNP: egress only to world"            "$np" '.spec.egress[0].toEntities[0]' "world"
   eq "CNP: egress only UDP 51820"           "$np" '.spec.egress[0].toPorts[0].ports[0].port + "/" + .spec.egress[0].toPorts[0].ports[0].protocol' "51820/UDP"
   eq "CNP: proxy only from prowlarr+flaresolverr" "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8888") | [.fromEndpoints[].matchLabels["app.kubernetes.io/name"]] | sort | join(",")' "flaresolverr,prowlarr"
+  eq "CNP: web UI from the *arrs"           "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8080") | .fromEndpoints[] | select(has("matchExpressions")) | .matchExpressions[0].values | sort | join(",")' "lidarr,radarr,sonarr"
 }
 
 arr_checks() {
@@ -148,6 +149,7 @@ test_prowlarr() {
   eq "prowlarr CNP: may reach the proxy" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "qbittorrent") | .toPorts[0].ports[0].port' "8888"
   eq "prowlarr: backups subPath only"    "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data/backups/prowlarr\") | .subPath" "backups/prowlarr"
   eq "prowlarr CNP: may reach flaresolverr" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "flaresolverr") | .toPorts[0].ports[0].port' "8191"
+  eq "prowlarr CNP: may reach lidarr"    "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "lidarr") | .toPorts[0].ports[0].port' "8686"
 }
 
 test_flaresolverr() {
