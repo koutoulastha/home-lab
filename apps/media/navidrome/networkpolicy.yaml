@@ -1,0 +1,55 @@
+# Navidrome is the only app in the stack reachable from the internet without
+# Pangolin SSO, so both directions are restricted.
+#
+# Ingress on 4533: Traefik (LAN route), Newt (Pangolin tunnel), and the node
+# (kubelet probes — with an ingress policy present they are not implied).
+#
+# Egress: cluster DNS, and HTTPS to public addresses only — Deezer artwork and
+# Last.fm bios. Not `toEntities: [world]`: that includes the LAN (TrueNAS,
+# router, Talos nodes). Private ranges are excepted explicitly; pods and
+# Services (10.244/16, 10.96/12) fall inside 10.0.0.0/8 as well.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: navidrome
+  namespace: media
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: navidrome
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+            app.kubernetes.io/name: traefik
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: pangolin
+            app.kubernetes.io/component: newt
+      toPorts:
+        - ports:
+            - port: "4533"
+              protocol: TCP
+    - fromEntities: [host]
+      toPorts:
+        - ports:
+            - port: "4533"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

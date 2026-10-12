@@ -1,0 +1,106 @@
+# Navidrome. Values for bjw-s app-template 5.2.1 (checked by
+# apps/media/tests/render-test.sh). Public via Pangolin with SSO OFF, so
+# Navidrome's own login is the only gate; networkpolicy.yaml confines it.
+defaultPodOptions:
+  # Internet-facing: no Kubernetes API credentials in the pod.
+  automountServiceAccountToken: false
+  securityContext:
+    fsGroup: 568
+    fsGroupChangePolicy: OnRootMismatch
+
+controllers:
+  navidrome:
+    strategy: Recreate
+    containers:
+      app:
+        image:
+          repository: ghcr.io/navidrome/navidrome
+          tag: 0.64.2@sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52
+        env:
+          ND_DATAFOLDER: /config
+          ND_MUSICFOLDER: /music
+          # inotify does not fire over NFS, so the schedule is what picks up
+          # Lidarr's imports.
+          ND_SCANNER_SCHEDULE: "@every 1h"
+          # Artist images (Deezer, no key) and bios (Last.fm, key in
+          # sealed-secret.yaml). ListenBrainz, a default, is left out.
+          ND_AGENTS: deezer,lastfm
+          ND_ENABLEINSIGHTSCOLLECTOR: "false"
+          ND_ENABLESHARING: "false"
+          # NEVER set ND_EXTAUTH_TRUSTEDSOURCES (old name
+          # ND_REVERSEPROXYWHITELIST). It does make the login rate limiter see
+          # real client IPs, but it also turns on Remote-User header login for
+          # requests from those proxies, and Traefik and Newt pass that header
+          # through from the internet. The render test fails if it appears.
+        # ND_LASTFM_APIKEY, ND_LASTFM_SECRET.
+        envFrom:
+          - secretRef:
+              name: navidrome-secret
+        probes:
+          # /ping answers 200 "." without authentication.
+          liveness: &probe
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /ping, port: 4533}
+              periodSeconds: 30
+              failureThreshold: 5
+          readiness: *probe
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /ping, port: 4533}
+              periodSeconds: 5
+              failureThreshold: 60
+        securityContext:
+          runAsUser: 568
+          runAsGroup: 568
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+
+service:
+  app:
+    controller: navidrome
+    ports:
+      http:
+        port: 4533
+
+# Same hostname as the Pangolin resource: LAN DNS resolves it to Traefik,
+# public DNS to the Pangolin edge.
+route:
+  app:
+    parentRefs:
+      - name: traefik-gateway
+        namespace: default
+    hostnames: [music.koutoulastha.dev]
+    rules:
+      - backendRefs:
+          - identifier: app
+            port: 4533
+
+persistence:
+  # SQLite database and caches (artwork, transcodes). SQLite is unsafe on NFS.
+  config:
+    type: persistentVolumeClaim
+    storageClass: truenas-iscsi
+    accessMode: ReadWriteOnce
+    size: 2Gi
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    globalMounts:
+      - path: /config
+  # The music library only, read-only: Navidrome cannot change or delete it.
+  media:
+    existingClaim: media-data
+    globalMounts:
+      - path: /music
+        subPath: media/music
+        readOnly: true
+  tmp:
+    type: emptyDir
+    sizeLimit: 2Gi
+    globalMounts:
+      - path: /tmp
