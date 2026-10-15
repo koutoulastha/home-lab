@@ -140,13 +140,18 @@ data:
           # reboots out from under the alert, because the 5m window keeps
           # returning > 0 for a while after the logs themselves stop.
           #
+          # No bare `Call Trace:`. The kernel prints one for every memcg OOM kill
+          # too, so it fired on FlareSolverr's Chromium hitting its 1Gi limit
+          # (UID 1000, "Not tainted", node never rebooted). Every real fault
+          # prints its own header line above the trace, matched below.
+          #
           # `node` is absent on lines arriving via KmsgLogConfig, which accepts
           # no extraTags; lines via machine.logging.destinations carry it. The
           # annotation handles both cases rather than rendering a blank name.
           - alert: TalosKernelFault
             expr: |
               sum by (node, service) (
-                count_over_time({job="talos"} |~ "Kernel panic - not syncing|BUG: unable to handle|Oops: |general protection fault|Fatal exception|Call Trace:"[5m])
+                count_over_time({job="talos"} |~ "Kernel panic - not syncing|BUG: unable to handle|Oops: |general protection fault|Fatal exception"[5m])
               ) > 0
             for: 2m
             labels:
