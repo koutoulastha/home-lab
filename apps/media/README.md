@@ -1,7 +1,9 @@
 # Media stack
 
-qBittorrent downloads over Proton VPN; Prowlarr, Sonarr and Radarr drive it;
-Jellyfin serves the library. Design: `docs/superpowers/specs/2026-09-30-media-stack-design.md`.
+qBittorrent downloads over Proton VPN; Prowlarr, Sonarr, Radarr and Lidarr
+drive it; Jellyfin serves the library and Navidrome the music. Design:
+`docs/superpowers/specs/2026-09-30-media-stack-design.md`, music:
+`docs/superpowers/specs/2026-10-11-music-stack-design.md`.
 
 | App | Application | LAN URL | In-cluster |
 |---|---|---|---|
@@ -11,7 +13,9 @@ Jellyfin serves the library. Design: `docs/superpowers/specs/2026-09-30-media-st
 | FlareSolverr | `flaresolverr` | — (Prowlarr only) | `flaresolverr.media.svc:8191` |
 | Sonarr | `sonarr` | https://sonarr.koutoulastha.dev | `sonarr.media.svc:8989` |
 | Radarr | `radarr` | https://radarr.koutoulastha.dev | `radarr.media.svc:7878` |
+| Lidarr | `lidarr` | https://lidarr.koutoulastha.dev | `lidarr.media.svc:8686` |
 | Jellyfin | `jellyfin` | https://jellyfin.koutoulastha.dev (also public via Pangolin) | `jellyfin.media.svc:8096` |
+| Navidrome | `navidrome` | https://music.koutoulastha.dev (also public via Pangolin, **no SSO**) | `navidrome.media.svc:4533` |
 
 ## Registering (no app-of-apps)
 
@@ -26,7 +30,9 @@ kubectl apply -f apps/media/prowlarr/application.yaml
 kubectl apply -f apps/media/flaresolverr/application.yaml
 kubectl apply -f apps/media/sonarr/application.yaml
 kubectl apply -f apps/media/radarr/application.yaml
+kubectl apply -f apps/media/lidarr/application.yaml
 kubectl apply -f apps/media/jellyfin/application.yaml
+kubectl apply -f apps/media/navidrome/application.yaml  # then create the admin on the LAN BEFORE the Pangolin resource
 ```
 
 ## Things that live outside git
@@ -41,6 +47,15 @@ kubectl apply -f apps/media/jellyfin/application.yaml
   `main-tunnel`, target `http://jellyfin.media.svc.cluster.local:8096`,
   **Pangolin SSO on** (decided 2026-10-01). Remote access is browser-only;
   the Jellyfin TV/phone apps cannot pass SSO and work on the LAN only.
+- **Pangolin Cloud:** HTTP resource `music.koutoulastha.dev`, site
+  `main-tunnel`, target `http://navidrome.media.svc.cluster.local:4533`,
+  **Pangolin SSO off** (decided 2026-10-07: Subsonic phone apps cannot pass
+  it). Create it only **after** Navidrome has an admin — Navidrome makes the
+  first visitor its admin (`/auth/createAdmin` is open until then).
+- **Last.fm:** an API account (https://www.last.fm/api/account/create) for
+  Navidrome's biographies; key and secret sealed in
+  `navidrome/sealed-secret.yaml`. Re-seal with the command in the music plan
+  (`docs/superpowers/plans/2026-10-11-music-stack.md`, Task 3 Step 8) to rotate.
 - **App UIs:** logins, download clients, root folders, Prowlarr proxy and app
   sync, backups folders, Jellyfin networking. Stored in each app's SQLite on
   its `/config` volume.
@@ -82,12 +97,12 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
 - **Dataset filling** (`MediaDatasetFilling`): delete watched media, or raise
   the quota on TrueNAS *and* the PV/PVC `storage` (a label only; NFS does not
   enforce it) — check the pool has room first.
-- **Backups:** Prowlarr/Sonarr/Radarr write scheduled backups to
+- **Backups:** Prowlarr/Sonarr/Radarr/Lidarr write scheduled backups to
   `/data/backups/<app>`; Jellyfin backups are manual (*Dashboard → Backups*)
   and land in `/data/backups/jellyfin` (mounted over `/config/data/backups`). The
   media library itself is deliberately not backed up.
-- **Prowlarr → Sonarr/Radarr** (*Settings → Apps*) must use `http://sonarr:8989`
-  and `http://radarr:7878`. Prowlarr's global proxy bypasses only dotless
+- **Prowlarr → Sonarr/Radarr/Lidarr** (*Settings → Apps*) must use
+  `http://sonarr:8989`, `http://radarr:7878` and `http://lidarr:8686`. Prowlarr's global proxy bypasses only dotless
   hostnames, so `sonarr.media.svc` would be sent into gluetun's proxy and fail.
 - **Cloudflare-protected indexers** (e.g. 1337x): in Prowlarr, *Settings →
   Indexers → + → FlareSolverr*, host `http://flaresolverr:8191/` (dotless, so
@@ -97,6 +112,30 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   Check: `kubectl -n media logs deploy/flaresolverr` shows the solve, and
   `kubectl -n media exec deploy/flaresolverr -- python -c "import urllib.request as u;print(u.urlopen('http://1.1.1.1',timeout=5))"`
   must fail (no direct egress).
+- **Music directories** (once, before Lidarr's root folder and before
+  Navidrome's first start — a missing `media/music` subPath would be created
+  by the kubelet as root, which the NFS share squashes):
+  ```bash
+  kubectl -n media run mkdirs --rm -i --restart=Never --image=busybox:1.37 \
+    --overrides='{"spec":{"securityContext":{"runAsUser":568,"runAsGroup":568},"containers":[{"name":"t","image":"busybox:1.37","stdin":true,"command":["sh","-c","mkdir -p /data/torrents/music /data/media/music /data/backups/lidarr && stat -c \"%u:%g %n\" /data/torrents/music /data/media/music /data/backups/lidarr"],"volumeMounts":[{"name":"d","mountPath":"/data"}]}],"volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"media-data"}}]}}'
+  # expect: 568:568 for all three
+  ```
+- **Lidarr:** download client qBittorrent `http://qbittorrent:8080`,
+  category `music` (saves to `/data/torrents/music`); root folder
+  `/data/media/music`; backups folder `/data/backups/lidarr`.
+- **Music in Jellyfin:** *Dashboard → Libraries → Add* → type Music, folder
+  `/data/media/music` (already mounted read-only — no manifest change).
+- **Navidrome scans hourly** (`ND_SCANNER_SCHEDULE`); inotify does not work
+  over NFS. For a new album now: *Settings → Library → Scan* (admin).
+- **Navidrome locked out remotely:** every remote request reaches Navidrome
+  from the Newt pod, so its login limiters see one client for everyone
+  outside the LAN. Web UI (`/auth/login`): 5 requests per 20 s per peer, any
+  username — anyone can block all remote web logins, and it answers 429
+  with no log line. Subsonic apps: 5 failures per 20 s per peer+username
+  (`Too many failed login attempts` in the log). Both clear after 20 s of
+  quiet; LAN logins through Traefik are a separate bucket and still work.
+  Do **not** "fix" it with `ND_EXTAUTH_TRUSTEDSOURCES` — see Known, accepted
+  risk.
 - **Render test** before any values change:
   `devbox run -- bash apps/media/tests/render-test.sh`.
 
@@ -106,7 +145,7 @@ Plus ipleak.net's torrent address detection magnet: only the Proton IP may appea
   their "create user" screen and start locked. Set the user through the API
   with the pre-seeded key:
   ```bash
-  set_login() {  # app, api-version (sonarr/radarr v3, prowlarr v1)
+  set_login() {  # app, api-version (sonarr/radarr v3, prowlarr/lidarr v1)
     local app=$1 v=$2 key user pass
     key=$(kubectl -n media exec deploy/$app -- printenv "${app^^}__AUTH__APIKEY")
     read -rp "$app username: " user; read -rsp "$app password: " pass; echo
@@ -163,3 +202,15 @@ proxy to `127.0.0.1:8080` and drive qBittorrent's API. gluetun's proxy does
 not filter private destinations. Accepted as low likelihood; the fix, if
 needed, is a qBittorrent API key (5.2+) for gluetun's port-update command and
 `WebUI\LocalHostAuth=true`.
+
+Navidrome is public without Pangolin SSO (decided 2026-10-07), so its own
+login faces the internet. Mitigations: a long random password per user;
+rate limits on web and Subsonic logins; the library mounted read-only; no
+service-account token; Cilium allows it only DNS and HTTPS to public
+addresses, so a compromise cannot reach qBittorrent, the *arr APIs, TrueNAS
+or the LAN. Because every remote request arrives from the Newt pod, anyone
+can keep all remote web logins blocked (5 requests per 20 s, no username
+needed), and an attacker who knows a username can do the same to that
+user's Subsonic apps — a nuisance, not a breach. `ND_EXTAUTH_TRUSTEDSOURCES` would restore
+per-client limits but also enable `Remote-User` header login through Traefik
+and Newt — it must stay unset (the render test enforces this).

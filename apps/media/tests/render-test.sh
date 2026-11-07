@@ -45,8 +45,9 @@ render() {
 }
 
 # Shared by every app: the invariants from the spec's Decisions table.
+# common_checks <app> <file> <port> <container> [hostname]
 common_checks() {
-  local app=$1 f=$2 port=$3 container=$4
+  local app=$1 f=$2 port=$3 container=$4 host=${5:-$1.koutoulastha.dev}
   local dep='select(.kind == "Deployment")'
   local c=".spec.template.spec.containers[] | select(.name == \"$container\")"
   eq "$app: Recreate strategy"            "$f" "$dep | .spec.strategy.type" "Recreate"
@@ -55,7 +56,7 @@ common_checks() {
   eq "$app: config PVC on truenas-iscsi"  "$f" 'select(.kind == "PersistentVolumeClaim") | .spec.storageClassName' "truenas-iscsi"
   eq "$app: config PVC never pruned"      "$f" 'select(.kind == "PersistentVolumeClaim") | .metadata.annotations["argocd.argoproj.io/sync-options"]' "Prune=false,Delete=false"
   eq "$app: HTTPRoute is gateway v1"      "$f" 'select(.kind == "HTTPRoute") | .apiVersion' "gateway.networking.k8s.io/v1"
-  eq "$app: HTTPRoute hostname"           "$f" 'select(.kind == "HTTPRoute") | .spec.hostnames[0]' "$app.koutoulastha.dev"
+  eq "$app: HTTPRoute hostname"           "$f" 'select(.kind == "HTTPRoute") | .spec.hostnames[0]' "$host"
   eq "$app: HTTPRoute -> traefik-gateway" "$f" 'select(.kind == "HTTPRoute") | .spec.parentRefs[0].name' "traefik-gateway"
   eq "$app: HTTPRoute backend port"       "$f" 'select(.kind == "HTTPRoute") | .spec.rules[0].backendRefs[0].port' "$port"
   eq "$app: Service name"                 "$f" 'select(.kind == "Service") | .metadata.name' "$app"
@@ -103,6 +104,7 @@ test_qbittorrent() {
   eq "CNP: egress only to world"            "$np" '.spec.egress[0].toEntities[0]' "world"
   eq "CNP: egress only UDP 51820"           "$np" '.spec.egress[0].toPorts[0].ports[0].port + "/" + .spec.egress[0].toPorts[0].ports[0].protocol' "51820/UDP"
   eq "CNP: proxy only from prowlarr+flaresolverr" "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8888") | [.fromEndpoints[].matchLabels["app.kubernetes.io/name"]] | sort | join(",")' "flaresolverr,prowlarr"
+  eq "CNP: web UI from the *arrs"           "$np" '.spec.ingress[] | select(.toPorts[0].ports[0].port == "8080") | .fromEndpoints[] | select(has("matchExpressions")) | .matchExpressions[0].values | sort | join(",")' "lidarr,radarr,sonarr"
 }
 
 arr_checks() {
@@ -131,6 +133,13 @@ test_radarr() {
   eq "radarr: /data mounted whole" "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data\") | has(\"subPath\")" "false"
 }
 
+test_lidarr() {
+  arr_checks lidarr 8686
+  local f="$OUT/lidarr.yaml" a='select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "app")'
+  eq "lidarr: /data mounted whole" "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data\") | has(\"subPath\")" "false"
+  eq "lidarr: /data is media-data" "$f" 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "data") | .persistentVolumeClaim.claimName' "media-data"
+}
+
 test_prowlarr() {
   arr_checks prowlarr 9696
   local f="$OUT/prowlarr.yaml" a='select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.name == "app")'
@@ -141,6 +150,7 @@ test_prowlarr() {
   eq "prowlarr CNP: may reach the proxy" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "qbittorrent") | .toPorts[0].ports[0].port' "8888"
   eq "prowlarr: backups subPath only"    "$f" "$a | .volumeMounts[] | select(.mountPath == \"/data/backups/prowlarr\") | .subPath" "backups/prowlarr"
   eq "prowlarr CNP: may reach flaresolverr" "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "flaresolverr") | .toPorts[0].ports[0].port' "8191"
+  eq "prowlarr CNP: may reach lidarr"    "$np" '.spec.egress[] | select(.toEndpoints[0].matchLabels["app.kubernetes.io/name"] == "lidarr") | .toPorts[0].ports[0].port' "8686"
 }
 
 test_flaresolverr() {
@@ -179,6 +189,50 @@ test_jellyfin() {
   eq "jellyfin: library is media/ only"  "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data/media\") | .subPath" "media"
   eq "jellyfin: backups over /config/data/backups" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/config/data/backups\") | .subPath" "backups/jellyfin"
   eq "jellyfin: cache capped"            "$f" "$dep | .spec.template.spec.volumes[] | select(.name == \"cache\") | .emptyDir.sizeLimit" "20Gi"
+}
+
+test_navidrome() {
+  local f; f=$(render navidrome)
+  local dep='select(.kind == "Deployment")'
+  local a='.spec.template.spec.containers[] | select(.name == "app")'
+  local env="$dep | $a | .env[]"
+  common_checks navidrome "$f" 4533 app music.koutoulastha.dev
+  eq "navidrome: read-only root"          "$f" "$dep | $a | .securityContext.readOnlyRootFilesystem" "true"
+  eq "navidrome: drops all caps"          "$f" "$dep | $a | .securityContext.capabilities.drop[0]" "ALL"
+  eq "navidrome: no SA token"             "$f" "$dep | .spec.template.spec.automountServiceAccountToken" "false"
+  eq "navidrome: probes /ping"            "$f" "$dep | $a | .readinessProbe.httpGet.path" "/ping"
+  eq "navidrome: library read-only"       "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/music\") | .readOnly" "true"
+  eq "navidrome: library is media/music"  "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/music\") | .subPath" "media/music"
+  eq "navidrome: nothing else of media-data" "$f" "$dep | $a | .volumeMounts[] | select(.mountPath == \"/data\") | .mountPath" ""
+  eq "navidrome: data folder"             "$f" "$env | select(.name == \"ND_DATAFOLDER\") | .value" "/config"
+  eq "navidrome: music folder"            "$f" "$env | select(.name == \"ND_MUSICFOLDER\") | .value" "/music"
+  eq "navidrome: scheduled scan"          "$f" "$env | select(.name == \"ND_SCANNER_SCHEDULE\") | .value" "@every 1h"
+  eq "navidrome: agents"                  "$f" "$env | select(.name == \"ND_AGENTS\") | .value" "deezer,lastfm"
+  eq "navidrome: no insights"             "$f" "$env | select(.name == \"ND_ENABLEINSIGHTSCOLLECTOR\") | .value" "false"
+  eq "navidrome: no sharing"              "$f" "$env | select(.name == \"ND_ENABLESHARING\") | .value" "false"
+  # Header-auth bypass: these would let any internet client send Remote-User.
+  eq "navidrome: no ExtAuth trust"        "$f" "$env | select(.name == \"ND_EXTAUTH_TRUSTEDSOURCES\" or .name == \"ND_REVERSEPROXYWHITELIST\") | .name" ""
+  eq "navidrome: Last.fm key from secret" "$f" "$dep | $a | .envFrom[0].secretRef.name" "navidrome-secret"
+  local np="$MEDIA/navidrome/networkpolicy.yaml"
+  eq "navidrome CNP: selects navidrome"   "$np" '.spec.endpointSelector.matchLabels["app.kubernetes.io/name"]' "navidrome"
+  eq "navidrome CNP: ingress traefik+newt" "$np" '[.spec.ingress[].fromEndpoints[]? | .matchLabels | (.["app.kubernetes.io/name"] // .["app.kubernetes.io/component"])] | sort | join(",")' "newt,traefik"
+  eq "navidrome CNP: kubelet probes"      "$np" '.spec.ingress[] | select(has("fromEntities")) | .fromEntities[0]' "host"
+  eq "navidrome CNP: ingress only 4533"   "$np" '[.spec.ingress[].toPorts[].ports[].port] | unique | join(",")' "4533"
+  eq "navidrome CNP: no world entity"     "$np" '[.spec.egress[] | select(has("toEntities"))] | length' "0"
+  eq "navidrome CNP: internet excludes LAN" "$np" '.spec.egress[] | select(has("toCIDRSet")) | .toCIDRSet[0].except | sort | join(",")' "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  eq "navidrome CNP: internet is 443 only" "$np" '.spec.egress[] | select(has("toCIDRSet")) | .toPorts[0].ports[0].port + "/" + .toPorts[0].ports[0].protocol' "443/TCP"
+  eq "navidrome CNP: egress rule count"   "$np" '.spec.egress | length' "2"
+  local pr="$MEDIA/navidrome/probe.yaml"
+  local bb="$ROOT/infrastructure/monitoring/blackbox-exporter/values.yaml"
+  local mod='.config.modules.http_navidrome_pangolin.http'
+  eq "probe: module"                     "$pr" '.spec.module' "http_navidrome_pangolin"
+  eq "probe: edge /ping"                 "$pr" '.spec.targets.staticConfig.static[0]' "https://130.110.2.46/ping"
+  eq "probe: path label"                 "$pr" '.spec.targets.staticConfig.labels.path' "navidrome-public"
+  eq "module: 200 only"                  "$bb" "$mod.valid_status_codes | join(\",\")" "200"
+  eq "module: no redirects (SSO = fail)" "$bb" "$mod.follow_redirects" "false"
+  eq "module: Host"                      "$bb" "$mod.headers.Host" "music.koutoulastha.dev"
+  eq "module: SNI"                       "$bb" "$mod.tls_config.server_name" "music.koutoulastha.dev"
+  eq "module: body is Navidrome's ping"  "$bb" "$mod.fail_if_body_not_matches_regexp[0]" '^\.$'
 }
 
 test_storage() {
