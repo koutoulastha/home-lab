@@ -40,9 +40,11 @@ controllers:
             cpu: 50m
             memory: 256Mi
           # Chrome grows per open challenge; cap it so a stuck solve is
-          # OOM-killed and restarted rather than starving the node.
+          # OOM-killed and restarted rather than starving the node. Each solve
+          # peaks at ~800Mi+ over a ~170Mi idle, and memory.oom.group kills the
+          # whole container (python too), so 1Gi restarted it several times a day.
           limits:
-            memory: 1Gi
+            memory: 2Gi
         # The image's user (flaresolverr) is named, not numeric — runAsNonRoot
         # needs the UID. Root filesystem stays writable: the driver patcher
         # and Chrome's profile write under /app.
