@@ -159,7 +159,7 @@ test_flaresolverr() {
   eq "flaresolverr: drops all caps"       "$f" "$dep | $a | .securityContext.capabilities.drop[0]" "ALL"
   eq "flaresolverr: probes /health"       "$f" "$dep | $a | .readinessProbe.httpGet.path" "/health"
   eq "flaresolverr: fallback proxy"       "$f" "$dep | $a | .env[] | select(.name == \"PROXY_URL\") | .value" "http://qbittorrent:8888"
-  eq "flaresolverr: memory limit"         "$f" "$dep | $a | .resources.limits.memory" "1Gi"
+  eq "flaresolverr: memory limit"         "$f" "$dep | $a | .resources.limits.memory" "2Gi"
   local np="$MEDIA/flaresolverr/networkpolicy.yaml"
   eq "flaresolverr CNP: selects flaresolverr" "$np" '.spec.endpointSelector.matchLabels["app.kubernetes.io/name"]' "flaresolverr"
   eq "flaresolverr CNP: no world egress"  "$np" '[.spec.egress[] | select(has("toEntities") or has("toCIDR") or has("toCIDRSet") or has("toFQDNs"))] | length' "0"
