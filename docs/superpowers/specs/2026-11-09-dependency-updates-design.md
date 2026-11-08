@@ -102,7 +102,7 @@ deploying**. The design treats a merged PR as a production rollout.
 | cloudnative-pg chart | infrastructure/database | 0.29.0 | 0.29.1 | database operator |
 | radarr | apps/media | 6.4.4.10685 | 6.4.4.10685 | current. 7.x is pre-release |
 | prowlarr | apps/media | 2.6.5.5623 | 2.7.0.5723 | 3.x is pre-release |
-| lidarr | apps/media | 3.1.6.5078 (**pre-release**) | 3.1.6.5079 | move back onto stable |
+| lidarr | apps/media | 3.1.6.5078 (**pre-release**) | 3.1.6.5079 upstream | home-operations never published 5079 (only `3.1.6` → 5078), so stay on 5078 until the next stable build is published. Correction found while planning |
 | sonarr | apps/media | 4.0.20.3012 | 4.0.20.3012 (verify) | 5.x is pre-release |
 | qbittorrent | apps/media | 5.2.4 | 5.3.0 | |
 | prometheus-pve-exporter | infrastructure/monitoring | 3.10.0 | 3.11.0 | |
@@ -126,7 +126,7 @@ batch. Batch order goes from lowest blast radius to highest:
 
 1. **Low-risk batch**: patch/minor bumps of non-critical things: blackbox-exporter,
    alloy ×4, loki, pve-exporter, busybox, kubectl, newt, cert-manager,
-   sealed-secrets, the *arr stable bumps (prowlarr, lidarr back to stable),
+   sealed-secrets, the *arr stable bumps (prowlarr; lidarr stays, see table),
    qbittorrent, jellyfin, app-template (with render-test.sh passing), and
    pinning openspeedtest. The builder may split this further if a release note
    shows breaking changes.
