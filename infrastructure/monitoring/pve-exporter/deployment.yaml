@@ -51,7 +51,7 @@ spec:
           # Pinned, like every other image and chart in this repo. Check
           # https://github.com/prometheus-pve/prometheus-pve-exporter/releases
           # before bumping.
-          image: prompve/prometheus-pve-exporter:3.10.0
+          image: prompve/prometheus-pve-exporter:3.11.0
           imagePullPolicy: IfNotPresent
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
