@@ -1,6 +1,8 @@
 # Manages the Cilium *LoadBalancer configuration* only — the L2 announcement
-# policy and the LB IP pool. Cilium itself (the CNI) is installed by Talos/Omni
-# as part of the cluster spec and is not managed here.
+# policy and the LB IP pool. Cilium itself (the CNI) is NOT managed here: it is
+# a Helm release (`cilium` in kube-system) installed by hand, not by Talos/Omni.
+# See docs/dependency-updates.md ("Deferred: Cilium and ArgoCD") before
+# changing that.
 #
 # These two resources were applied by hand and tracked by nothing until now.
 # They own the 192.168.20.240-250 range that every LoadBalancer Service in the

@@ -13,7 +13,7 @@ controllers:
       app:
         image:
           repository: ghcr.io/jellyfin/jellyfin
-          tag: 12.1@sha256:008ec8024bdaaa6f0a3f0de468e185633eeba9d67c56936e8dbf5ef6b8d6200f
+          tag: 12.4@sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771
         probes:
           # /health answers 200 "Healthy" without authentication.
           liveness: &probe

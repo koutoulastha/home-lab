@@ -45,7 +45,6 @@ apps/
   openspeedtest/
   pangolin-newt/          # Pangolin tunnel agent
   immich/                 # photos; db/ is a separate, never-pruned Application
-  helm-webapp/            # demo chart, deployed to the `dev` namespace (manual sync)
 docs/superpowers/         # design specs + implementation plans
 old/                      # pre-Kubernetes docker-compose setup
 .talos/, .kube/           # Talos (Omni) and kube contexts — no credentials, auth is OIDC/exec
