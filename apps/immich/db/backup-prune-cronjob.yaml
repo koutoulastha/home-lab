@@ -59,7 +59,7 @@ spec:
             - name: prune
               # NOT registry.k8s.io/kubectl — that image is distroless and has
               # no shell, so this script could not run in it.
-              image: docker.io/alpine/kubectl:1.36.4
+              image: docker.io/alpine/kubectl:1.37.2
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:

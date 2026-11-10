@@ -22,7 +22,7 @@ Set `RENDER_OUT=<dir>` to keep the rendered manifests for diffing.
 
 **`KUBE_VERSION`**: the cluster's server version, from
 `kubectl version -o json | jq -r .serverVersion.gitVersion`.
-Recorded value: `PENDING` (update when the cluster is upgraded).
+Recorded value: `v1.37.2` (2026-11-10; update when the cluster is upgraded).
 
 Self-test: `KUBE_VERSION=… devbox run -- bash tests/render-app.test.sh`.
 It expects every current Application to render, a bogus chart version to be
