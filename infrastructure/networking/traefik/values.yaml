@@ -17,7 +17,10 @@ ports:
 service:
   additionalServices:
     internal:
-      type: ClusterIP
+      # Chart 42 schema: Service fields go under `spec` (a bare `type` is
+      # rejected and fails the whole render).
+      spec:
+        type: ClusterIP
 # Create the IngressRoute that routes /dashboard and /api on the "traefik"
 # entrypoint to the internal api@internal handler. Without this the dashboard
 # is enabled but unrouted (Traefik returns 404).
