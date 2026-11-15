@@ -166,6 +166,11 @@ alertmanager:
             send_resolved: false
 
 grafana:
+  # The chart's `helm test` pod (bats). It is only useful under `helm test`,
+  # which never runs here. Off, so ArgoCD can't end up creating a stray test
+  # pod on sync (it renders from kube-prometheus-stack 93 on).
+  testFramework:
+    enabled: false
   # Password comes from the sealed secret created in Task 2. Never the chart's
   # default of "prom-operator".
   admin:
