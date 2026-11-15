@@ -242,3 +242,19 @@ Facts found on 2026-11-08, kept for a later project:
   command for its Application(s), after checking the Application name(s) and
   the namespace/resources it owns, so pruning removes the workload too.
   Renovate doesn't need to handle it.
+
+## Decided during execution (owner's, 2026-11-15)
+
+- **Root Application (app-of-apps).** Batch 1 showed that `targetRevision`
+  bumps in `application.yaml` files never deploy on merge: nothing syncs the
+  Application objects themselves. Live Applications had also drifted
+  (cert-manager and traefik on `targetRevision: '*'`). The fix is one root
+  Application, `infrastructure/cicd/argocd/root.yaml`, that syncs every
+  `application*.yaml` under `apps/` and `infrastructure/` with
+  `automated: {prune: false, selfHeal: true}`.
+  - `selfHeal` reverts hand edits to child Applications, which stops drift.
+  - `prune: false`: removing an `application.yaml` from git never deletes the
+    Application or its workloads. Removal stays a deliberate `kubectl` step.
+  - The root manages neither itself nor `old/`. The owner applies `root.yaml` once by hand.
+  - After this, "merge = deploy" holds for chart bumps too, which Renovate
+    depends on. It lands before batch 2.
