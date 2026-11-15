@@ -1,0 +1,42 @@
+# The app-of-apps root. It syncs every Application definition in the repo
+# (apps/**/application*.yaml, infrastructure/**/application*.yaml), so a
+# merged change to an Application, such as a chart `targetRevision` bump from
+# Renovate, deploys without anyone running `kubectl apply`.
+#
+# Before this existed, Application objects were applied by hand once and then
+# drifted (cert-manager and traefik were found on `targetRevision: '*'`).
+#
+# Bootstrap: apply this file once by hand. Nothing manages the root itself;
+# its include pattern deliberately does not match this file.
+#
+#   kubectl apply -f infrastructure/cicd/argocd/root.yaml
+#
+# ArgoCD matches `include` against the path relative to `path` with no path
+# separator, so `*` also spans directories. tests/root-app.test.sh checks the
+# pattern selects exactly the Application files.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: https://github.com/koutoulastha/home-lab.git
+    targetRevision: main
+    path: .
+    directory:
+      recurse: true
+      include: '{apps/*application*.yaml,infrastructure/*application*.yaml}'
+  syncPolicy:
+    automated:
+      # NEVER true. Deleting or renaming an application.yaml must not delete
+      # the Application, and with it (if it carries the resources finalizer)
+      # its workloads and PVCs. Removing an app stays a deliberate kubectl
+      # step, done the way helm-webapp was removed.
+      prune: false
+      # Reverts hand edits to child Applications, so they can't drift from git.
+      selfHeal: true

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - "Latest" = latest **stable**. Never move anything onto a pre-release. The `home-operations` *arr tags don't mark pre-releases, so check each candidate against the upstream GitHub release (`prerelease: false`).
-- **Merging to `main` deploys** (ArgoCD auto-sync). One branch and one PR per batch, branched from up-to-date `main`. **Stop after opening each batch PR.** The owner merges it, watches the sync, and runs the verification commands. The next batch starts only after the owner confirms.
+- **Merging to `main` deploys** (ArgoCD auto-sync), but only for `application.yaml` changes once Task 2b's root Application is live. Before that, the owner must `kubectl apply` changed Application files. One branch and one PR per batch, branched from up-to-date `main`. **Stop after opening each batch PR.** The owner merges it, watches the sync, and runs the verification commands. The next batch starts only after the owner confirms.
 - **Claude never runs cluster-mutating commands.** Every `kubectl`/`talosctl` command goes in the PR description or a doc as copy-pasteable text for the owner. Read-only `helm template` / registry lookups run locally are fine.
 - Re-check "latest stable" for each dependency at the start of its batch. The spec's table is a snapshot from 2026-11-08.
 - Keep each file's existing pin style: `tag: <ver>@sha256:<digest>` stays digest-pinned (get the digest from the registry for the exact tag). Quoted `targetRevision` (`"v1.21.1"`, `"41.4.0"`) stays quoted with the same `v` style.
@@ -83,6 +83,23 @@ Not in this batch: Lidarr (stays on `3.1.6.5078`, since home-operations never pu
     ```
   - Post-merge checks: `kubectl -n argocd get applications` (all `Synced`/`Healthy`), pods running in `monitoring`, `media`, `cert-manager`, `kube-system` (sealed-secrets), the pangolin-newt Application's destination namespace, the Pangolin-exposed probes `probe_success == 1` in Prometheus, and one `kubeseal --fetch-cert` to confirm the sealed-secrets controller answers.
 - [ ] **Step 7: Stop.** Wait for the owner to confirm batch 1 is merged and healthy.
+
+### Task 2b: Root Application (app-of-apps), before batch 2
+
+Added 2026-11-15 by owner decision (see the spec, "Decided during execution"). Without it, `targetRevision` bumps don't deploy on merge.
+
+**Files:**
+- Create: `infrastructure/cicd/argocd/root.yaml`
+- Create: `tests/root-app.test.sh`
+- Modify: `tests/README.md`, `README.md` (layout line + bootstrap note)
+
+**Interfaces:**
+- Produces: Application `root` (namespace `argocd`, project `default`) with a single git source (`targetRevision: main`, `path: .`, `directory.recurse: true`, `directory.include` matching `application*.yaml` under `apps/` and `infrastructure/` only) and `syncPolicy.automated: {prune: false, selfHeal: true}`.
+- ArgoCD's `include` glob has no path separator, so `*` also matches `/`. The test evaluates the pattern the same way (bash `[[ path == pattern ]]`, where `*` matches `/`).
+
+- [ ] **Step 1: Write `tests/root-app.test.sh`.** It reads `directory.include` from `root.yaml`, splits the `{a,b}` alternatives, and asserts: (1) the set of repo files it matches equals `git ls-files 'apps/**application*.yaml' 'infrastructure/**application*.yaml'`; (2) `root.yaml` and nothing under `old/` is matched; (3) `prune` is `false` and `selfHeal` is `true`; (4) `targetRevision` is `main`; (5) every matched file contains only `kind: Application` documents. Run it before `root.yaml` exists → FAIL.
+- [ ] **Step 2: Write `root.yaml`, with comments explaining prune/selfHeal and the one-time bootstrap. Run the test** → all `ok`.
+- [ ] **Step 3: Commit, push (owner), open the PR.** The PR body gives the owner the bootstrap: before applying, `kubectl diff -f` every child file and expect no differences beyond `jsonnet`/`generation`/the known immich-db `prune: false`. Then `kubectl apply -f infrastructure/cicd/argocd/root.yaml`, and check that `kubectl -n argocd get application root` is Synced/Healthy and its resources list every child (`kubectl -n argocd get application root -o jsonpath='{range .status.resources[*]}{.name}{"\n"}{end}' | sort`), with no child newly OutOfSync. **Stop.**
 
 ### Task 3: Batch 2: snapshot-controller and cloudnative-pg
 

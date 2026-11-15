@@ -27,3 +27,15 @@ Recorded value: `v1.37.2` (2026-11-10; update when the cluster is upgraded).
 Self-test: `KUBE_VERSION=… devbox run -- bash tests/render-app.test.sh`.
 It expects every current Application to render, a bogus chart version to be
 reported as `FAIL`, and a missing `KUBE_VERSION` to be refused.
+
+## `root-app.test.sh`: the app-of-apps root
+
+```bash
+devbox run -- bash tests/root-app.test.sh
+```
+
+Checks that `infrastructure/cicd/argocd/root.yaml`'s `directory.include` selects
+exactly the repo's `application*.yaml` files (evaluated the way ArgoCD does,
+with `*` spanning `/`), never itself or `old/`. Also checks that every selected file
+holds only `Application` documents, and that the sync policy is `prune: false`,
+`selfHeal: true`. Run it when you add, rename or move an Application file.
