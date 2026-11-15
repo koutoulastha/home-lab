@@ -13,7 +13,7 @@ controllers:
           # Chart default is v2.6.3, a full major behind. Server and
           # machine-learning must always carry the same tag. (valkey pins its
           # own image and is unaffected.)
-          tag: v3.1.0
+          tag: v3.4.1
         env:
           # CNPG generates this Secret; nothing credential-shaped is in git.
           DB_URL:

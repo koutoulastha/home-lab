@@ -20,7 +20,7 @@ spec:
   enablePDB: false
 
   # Tags are <postgres-minor>-<vectorchord-version>; there is no bare `17-x`.
-  # Immich v3.1.0 accepts VectorChord '>=0.3 <2' (server/src/constants.ts).
+  # Immich v3.1.0 through v3.4.1 accept VectorChord '>=0.3 <2' (server/src/constants.ts).
   imageName: ghcr.io/tensorchord/cloudnative-vectorchord:17.9-1.1.0
 
   postgresql:
